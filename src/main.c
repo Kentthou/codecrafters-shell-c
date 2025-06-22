@@ -2,9 +2,11 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/types.h>
 
 #define MAX_INPUT 128
 #define CMD_OFFSET 5
+#define MAX_ARGS 16
 
 // Checks if a command is shell builtins
 int is_builtin(const char *cmd) {
@@ -35,7 +37,6 @@ void handle_type(const char *arg) {
   char *path_env = getenv("PATH");
   char *path_copy = strdup(path_env);  // make a copy since strtok modifies the string
   char *dir = strtok(path_copy, ":");  // gets the first directory
-
   int found = 0;  // flag to track if command is found in any PATH dir
   char full_path[256];
 
@@ -59,12 +60,59 @@ void handle_type(const char *arg) {
   free(path_copy);
 }
 
+void run_ext_cmd(char **args)
+{
+  char *path_env = getenv("PATH");
+  char * path_copy = strdup(path_env);
+  char *dir = strtok(path_copy, ":");
+  char full_path[256];
+  int found = 0;
+
+  while (dir != NULL)
+  {
+    snprintf(full_path, sizeof(full_path), "%s/%s", dir, args[0]);
+    if (access(full_path, X_OK) == 0) 
+    {
+      found = 1;
+      break;
+    }
+    dir = strtok(NULL, ":");
+  }
+
+  if (!found)
+  {
+    printf("%s: command not found\n", args[0]);
+    free(path_copy);
+    return;
+  }
+
+  pid_t pid = fork();
+
+  if (pid == 0)
+  {
+    execv(full_path, args); // Child process: try to run the command
+    perror("execv");
+    exit(1);
+  }
+  else if (pid > 0)
+  {
+    // parent: wait for child
+    waitpid(pid, NULL, 0);
+  }
+  else
+  {
+    perror("fork");
+  }
+
+  free(path_copy);
+}
+
 int main() {
   setbuf(stdout, NULL);  // disables output buffering so we see "$ " right away
 
   char input[MAX_INPUT];  // storage for the user's input (up to 127 characters + null terminator)
 
-  while (1) {  // infinite loop – keeps the shell running until we break
+  while (1) {  // infinite loop – keeps the shell running until break
     printf("$ ");
 
     // fgets() returns NULL if the user types Ctrl+D (EOF)
@@ -72,19 +120,34 @@ int main() {
       break;  // if Ctrl+D is pressed (EOF), exit the loop and end the shell
     }
 
-    input[strcspn(input, "\n")] = '\0';  // strip newline from input
+    input[strcspn(input, "\n")] = '\0';
 
     if (strncmp(input, "echo", 4) == 0) {
-      handle_echo(input);  // handles echo commands
+      handle_echo(input);
     }
     else if (strncmp(input, "type ", CMD_OFFSET) == 0) {
-      handle_type(input + CMD_OFFSET);  // handles type command
+      handle_type(input + CMD_OFFSET); 
     }
     else if (strcmp(input, "exit 0") == 0) {
-      exit(0);  // exits the shell
+      exit(0);
     }
     else {
-      printf("%s: command not found\n", input);  // fallback for unknown commands
+      // parse input into args
+      char *args[MAX_ARGS];
+      int i = 0;
+
+      char *token = strtok(input, " "); // get first word
+      while (token  != NULL && i < MAX_ARGS - 1)
+      {
+        args[i++] = token; // store it
+        token = strtok(NULL, " "); // get next word
+      }
+      args[i] = NULL; // terminate list
+
+      if (args[0] != NULL)
+      {
+        run_ext_cmd(args);
+      }
     }
   }
 
