@@ -1,19 +1,22 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 int main() {
   // Flush after every printf
   setbuf(stdout, NULL);
 
-  // Wait for user input
   char input[100];
 
   printf("$ ");
 
-  // for now, treat all commands as invalid.
-  while(fgets(input, 100, stdin) != NULL)
-  {
-    input[strlen(input) -1] = '\0';
+  while (fgets(input, sizeof(input), stdin) != NULL) {
+    input[strcspn(input, "\n")] = '\0';
+
+    if (strcmp(input, "exit 0") == 0) {
+      exit(0); 
+    }
+
     printf("%s: command not found\n", input);
     printf("$ ");
   }
