@@ -6,7 +6,7 @@
 #define MAX_INPUT 128
 #define CMD_OFFSET 5
 
-// Checks if a command is one of our shell builtins
+// Checks if a command is shell builtins
 int is_builtin(const char *cmd) {
   return strcmp(cmd, "echo") == 0 ||
          strcmp(cmd, "exit") == 0 ||
@@ -43,9 +43,8 @@ void handle_type(const char *arg) {
   while (dir != NULL) {
     snprintf(full_path, sizeof(full_path), "%s/%s", dir, arg);
 
-    // If file exists and is executable
     if (access(full_path, X_OK) == 0) {
-      printf("%s is %s\n", arg, full_path);  // prints the full path to the command
+      printf("%s is %s\n", arg, full_path);
       found = 1;
       break;
     }
