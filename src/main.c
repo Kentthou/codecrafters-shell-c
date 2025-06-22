@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 
 #define MAX_INPUT 128
 #define CMD_OFFSET 5
