@@ -20,10 +20,10 @@ int is_builtin(const char *cmd) {
 
 void handle_echo(const char *input) {
   if (strcmp(input, "echo") == 0) {
-    printf("\n");  // prints a blank line
+    printf("\n"); // prints a blank line
   } else {
     const char *message = input + CMD_OFFSET;
-    printf("%s\n", message);  // prints message after "echo "
+    printf("%s\n", message); // prints message after "echo "
   }
 }
 
@@ -31,7 +31,7 @@ void handle_type(const char *arg) {
   // First: check if shell builtin
   if (is_builtin(arg)) {
     printf("%s is a shell builtin\n", arg);
-    return;  // stop here, no need to check PATH
+    return; // stop here, no need to check PATH
   }
 
   // Get the PATH environment variable
@@ -41,9 +41,9 @@ void handle_type(const char *arg) {
     return;
   }
 
-  char *path_copy = strdup(path_env);  // make a copy since strtok modifies the string
-  char *dir = strtok(path_copy, ":");  // gets the first directory
-  int found = 0;  // flag to track if command is found in any PATH dir
+  char *path_copy = strdup(path_env); // make a copy since strtok modifies the string
+  char *dir = strtok(path_copy, ":"); // gets the first directory
+  int found = 0; // flag to track if command is found in any PATH dir
   char full_path[MAXIMUM_PATH];
 
   // Go through each dir in PATH
@@ -56,11 +56,11 @@ void handle_type(const char *arg) {
       break;
     }
 
-    dir = strtok(NULL, ":");  // move to next dir
+    dir = strtok(NULL, ":"); // move to next dir
   }
 
   if (!found) {
-    printf("%s: not found\n", arg);  // if nothing matched in PATH
+    printf("%s: not found\n", arg); // if nothing matched in PATH
   }
 
   free(path_copy);
@@ -105,27 +105,23 @@ void handle_cd(const char *path) {
   }
 }
 
-void run_external_cmd(char **args)
-{
+void run_external_cmd(char **args) {
   char *path_env = getenv("PATH");
-  char * path_copy = strdup(path_env);
+  char *path_copy = strdup(path_env);
   char *dir = strtok(path_copy, ":");
   char full_path[256];
   int found = 0;
 
-  while (dir != NULL)
-  {
+  while (dir != NULL) {
     snprintf(full_path, sizeof(full_path), "%s/%s", dir, args[0]);
-    if (access(full_path, X_OK) == 0) 
-    {
+    if (access(full_path, X_OK) == 0) {
       found = 1;
       break;
     }
     dir = strtok(NULL, ":");
   }
 
-  if (!found)
-  {
+  if (!found) {
     printf("%s: command not found\n", args[0]);
     free(path_copy);
     return;
@@ -133,19 +129,14 @@ void run_external_cmd(char **args)
 
   pid_t pid = fork();
 
-  if (pid == 0) 
-  {
+  if (pid == 0) {
     execv(full_path, args); // Child process: try to run the command
     perror("execv");
     exit(1);
-  }
-  else if (pid > 0)
-  {
+  } else if (pid > 0) {
     // parent: wait for child
     waitpid(pid, NULL, 0);
-  }
-  else
-  {
+  } else {
     perror("fork");
   }
 
@@ -153,33 +144,29 @@ void run_external_cmd(char **args)
 }
 
 int main() {
-  setbuf(stdout, NULL);  // disables output buffering so we see "$ " right away
+  setbuf(stdout, NULL); // disables output buffering so we see "$ " right away
 
-  char input[MAX_INPUT];  // storage for the user's input (up to 127 characters + null terminator)
+  char input[MAX_INPUT]; // storage for the user's input (up to 127 characters + null terminator)
 
-  while (1) {  // infinite loop – keeps the shell running until break
+  while (1) { // infinite loop – keeps the shell running until break
     printf("$ ");
 
     // fgets() returns NULL if the user types Ctrl+D (EOF)
     if (fgets(input, sizeof(input), stdin) == NULL) {
-      break;  // if Ctrl+D is pressed (EOF), exit the loop and end the shell
+      break; // if Ctrl+D is pressed (EOF), exit the loop and end the shell
     }
 
     input[strcspn(input, "\n")] = '\0';
 
     if (strncmp(input, "echo", 4) == 0) {
       handle_echo(input);
-    }
-    else if (strncmp(input, "type ", CMD_OFFSET) == 0) {
-      handle_type(input + CMD_OFFSET); 
-    }
-    else if (strcmp(input, "exit 0") == 0) {
+    } else if (strncmp(input, "type ", CMD_OFFSET) == 0) {
+      handle_type(input + CMD_OFFSET);
+    } else if (strcmp(input, "exit 0") == 0) {
       exit(0);
-    }
-    else if (strcmp(input, "pwd") == 0){
+    } else if (strcmp(input, "pwd") == 0) {
       handle_pwd();
-    }
-    else {
+    } else {
       // parse input into args
       char *args[MAX_ARGS];
       int i = 0;
@@ -189,7 +176,7 @@ int main() {
         args[i++] = token; // store it
         token = strtok(NULL, " "); // get next word
       }
-      args[i] = NULL;
+      args[i] = NULL; // terminate list
 
       if (args[0] != NULL) {
         if (strcmp(args[0], "cd") == 0) {
