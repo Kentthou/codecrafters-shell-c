@@ -13,6 +13,7 @@
 int is_builtin(const char *cmd) {
   return strcmp(cmd, "echo") == 0 ||
          strcmp(cmd, "exit") == 0 ||
+         strcmp(cmd, "pwd") == 0 ||
          strcmp(cmd, "type") == 0;
 }
 
