@@ -76,7 +76,19 @@ void handle_pwd() {
 }
 
 void handle_cd(const char*path) {
-  if (chdir(path) != 0) {
+  char current_dir[MAXIMUM_PATH];
+  char resolved_path[MAXIMUM_PATH];
+
+  if (getcwd(current_dir, sizeof(current_dir)) == NULL) {
+    perror("getcwd failed");
+    return;
+  }
+
+  if (realpath(path, resolved_path) == NULL) {
+    fprintf(stderr, "cd: %s: No such file or directory\n", path);
+  }
+
+  if (chdir(resolved_path) != 0) {
     fprintf(stderr, "cd: %s: No such file or directory\n", path);
   }
 }
@@ -171,7 +183,10 @@ int main() {
       if (args[0] != NULL)
       {
         if (strcmp(args[0], "cd") == 0) {
-          if (args[1] != NULL) {
+          if (args[1] == NULL) {
+            fprintf(stderr, "cd: missing operand\n");
+          } 
+          else {
             handle_cd(args[1]);
           }
         } 
