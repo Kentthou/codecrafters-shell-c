@@ -8,15 +8,14 @@
 #define MAX_INPUT 128
 #define CMD_OFFSET 5
 #define MAX_ARGS 16
+#define MAXIMUM_PATH 4096
 
-// Checks if a command is shell builtins
 int is_builtin(const char *cmd) {
   return strcmp(cmd, "echo") == 0 ||
          strcmp(cmd, "exit") == 0 ||
          strcmp(cmd, "type") == 0;
 }
 
-// Handles echo functionality
 void handle_echo(const char *input) {
   if (strcmp(input, "echo") == 0) {
     printf("\n");  // prints a blank line
@@ -26,7 +25,6 @@ void handle_echo(const char *input) {
   }
 }
 
-// Handles the type command, checking builtins and PATH
 void handle_type(const char *arg) {
   // First: check if shell builtin
   if (is_builtin(arg)) {
@@ -36,10 +34,15 @@ void handle_type(const char *arg) {
 
   // Get the PATH environment variable
   char *path_env = getenv("PATH");
+  if (!path_env) {
+    fprintf(stderr, "PATH not set\n");
+    return;
+  }
+
   char *path_copy = strdup(path_env);  // make a copy since strtok modifies the string
   char *dir = strtok(path_copy, ":");  // gets the first directory
   int found = 0;  // flag to track if command is found in any PATH dir
-  char full_path[256];
+  char full_path[MAXIMUM_PATH];
 
   // Go through each dir in PATH
   while (dir != NULL) {
@@ -61,7 +64,16 @@ void handle_type(const char *arg) {
   free(path_copy);
 }
 
-void run_ext_cmd(char **args)
+void handle_pwd() {
+  char full_path[MAXIMUM_PATH];
+  if (getcwd(full_path, sizeof(full_path)) != NULL) {
+    printf("%s\n", full_path);
+  } else {
+    perror("getcwd failed");
+  }
+}
+
+void run_external_cmd(char **args)
 {
   char *path_env = getenv("PATH");
   char * path_copy = strdup(path_env);
@@ -89,7 +101,7 @@ void run_ext_cmd(char **args)
 
   pid_t pid = fork();
 
-  if (pid == 0)
+  if (pid == 0) 
   {
     execv(full_path, args); // Child process: try to run the command
     perror("execv");
@@ -132,6 +144,9 @@ int main() {
     else if (strcmp(input, "exit 0") == 0) {
       exit(0);
     }
+    else if (strcmp(input, "pwd") == 0){
+      handle_pwd();
+    }
     else {
       // parse input into args
       char *args[MAX_ARGS];
@@ -147,7 +162,7 @@ int main() {
 
       if (args[0] != NULL)
       {
-        run_ext_cmd(args);
+        run_external_cmd(args);
       }
     }
   }
