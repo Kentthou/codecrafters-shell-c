@@ -192,15 +192,14 @@ int main() {
       }
       args[i] = NULL; // terminate list
 
-      if (args[0] != NULL)
-      {
+      if (args[0] != NULL) {
         if (strcmp(args[0], "cd") == 0) {
           if (args[1] == NULL) {
             handle_cd("~");
+          } 
+          else {
+            handle_cd(args[1]);
           }
-        } 
-        else {
-          handle_cd(args));
         }
       }
     }
