@@ -86,6 +86,7 @@ void handle_cd(const char*path) {
 
   if (realpath(path, resolved_path) == NULL) {
     fprintf(stderr, "cd: %s: No such file or directory\n", path);
+    return;
   }
 
   if (chdir(resolved_path) != 0) {
