@@ -75,7 +75,7 @@ void handle_pwd() {
   }
 }
 
-void handle_cd(const char*path) {
+void handle_cd(const char *path) {
   char current_dir[MAXIMUM_PATH];
   char resolved_path[MAXIMUM_PATH];
   char *target_path = NULL;
@@ -86,8 +86,7 @@ void handle_cd(const char*path) {
       fprintf(stderr, "cd: HOME not set\n");
       return;
     }
-  }
-  else {
+  } else {
     target_path = (char *)path;
   }
 
@@ -96,7 +95,7 @@ void handle_cd(const char*path) {
     return;
   }
 
-  if (realpath(path, resolved_path) == NULL) {
+  if (realpath(target_path, resolved_path) == NULL) {
     fprintf(stderr, "cd: %s: No such file or directory\n", path);
     return;
   }
@@ -197,7 +196,7 @@ int main() {
       {
         if (strcmp(args[0], "cd") == 0) {
           if (args[1] == NULL) {
-            handle ("~");
+            handle_cd("~");
           }
         } 
         else {
