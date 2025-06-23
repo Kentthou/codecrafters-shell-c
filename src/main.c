@@ -78,6 +78,18 @@ void handle_pwd() {
 void handle_cd(const char*path) {
   char current_dir[MAXIMUM_PATH];
   char resolved_path[MAXIMUM_PATH];
+  char *target_path = NULL;
+
+  if (strcmp(path, "~") == 0) {
+    target_path = getenv("HOME");
+    if (target_path == NULL) {
+      fprintf(stderr, "cd: HOME not set\n");
+      return;
+    }
+  }
+  else {
+    target_path = (char *)path;
+  }
 
   if (getcwd(current_dir, sizeof(current_dir)) == NULL) {
     perror("getcwd failed");
@@ -185,14 +197,11 @@ int main() {
       {
         if (strcmp(args[0], "cd") == 0) {
           if (args[1] == NULL) {
-            fprintf(stderr, "cd: missing operand\n");
-          } 
-          else {
-            handle_cd(args[1]);
+            handle ("~");
           }
         } 
         else {
-          run_external_cmd(args);
+          handle_cd(args));
         }
       }
     }
