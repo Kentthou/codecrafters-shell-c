@@ -185,21 +185,21 @@ int main() {
       int i = 0;
 
       char *token = strtok(input, " "); // get first word
-      while (token  != NULL && i < MAX_ARGS - 1)
-      {
+      while (token != NULL && i < MAX_ARGS - 1) {
         args[i++] = token; // store it
         token = strtok(NULL, " "); // get next word
       }
-      args[i] = NULL; // terminate list
+      args[i] = NULL;
 
       if (args[0] != NULL) {
         if (strcmp(args[0], "cd") == 0) {
           if (args[1] == NULL) {
             handle_cd("~");
-          } 
-          else {
+          } else {
             handle_cd(args[1]);
           }
+        } else {
+          run_external_cmd(args);
         }
       }
     }
