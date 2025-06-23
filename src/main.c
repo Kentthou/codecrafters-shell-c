@@ -6,7 +6,6 @@
 #include <sys/wait.h>
 
 #define MAX_INPUT 128
-#define CMD_OFFSET 5
 #define MAX_ARGS 16
 #define MAXIMUM_PATH 4096
 
@@ -18,19 +17,43 @@ int is_builtin(const char *cmd) {
          strcmp(cmd, "type") == 0;
 }
 
-void handle_echo(const char *input) {
-  if (strcmp(input, "echo") == 0) {
+// Parse input into args
+void parse_input(char *input, char **args) {
+  int i = 0;
+  char *token = strtok(input, " "); // get first word
+  while (token != NULL && i < MAX_ARGS - 1) {
+    args[i++] = token; // store it
+    token = strtok(NULL, " "); // get next word
+  }
+  args[i] = NULL;
+}
+
+// Handle echo command (prints args after echo)
+void handle_echo(char **args) {
+  if (args[1] == NULL) {
     printf("\n"); // prints a blank line
   } else {
-    const char *message = input + CMD_OFFSET;
-    printf("%s\n", message); // prints message after "echo "
+    // Join args[1...n] with spaces
+    for (int i = 1; args[i] != NULL; i++) {
+      printf("%s", args[i]);
+      if (args[i + 1] != NULL) {
+        printf(" ");
+      }
+    }
+    printf("\n");
   }
 }
 
-void handle_type(const char *arg) {
-  // First: check if shell builtin
-  if (is_builtin(arg)) {
-    printf("%s is a shell builtin\n", arg);
+// Handle type command (shows if a command is builtin or in PATH)
+void handle_type(char **args) {
+  if (args[1] == NULL) {
+    fprintf(stderr, "type: missing argument\n");
+    return;
+  }
+
+  // check if shell builtin
+  if (is_builtin(args[1])) {
+    printf("%s is a shell builtin\n", args[1]);
     return; // stop here, no need to check PATH
   }
 
@@ -42,16 +65,16 @@ void handle_type(const char *arg) {
   }
 
   char *path_copy = strdup(path_env); // make a copy since strtok modifies the string
-  char *dir = strtok(path_copy, ":"); // gets the first directory
+  char *dir = strtok(path_copy, ":"); // gets the first dir
   int found = 0; // flag to track if command is found in any PATH dir
   char full_path[MAXIMUM_PATH];
 
   // Go through each dir in PATH
   while (dir != NULL) {
-    snprintf(full_path, sizeof(full_path), "%s/%s", dir, arg);
+    snprintf(full_path, sizeof(full_path), "%s/%s", dir, args[1]);
 
     if (access(full_path, X_OK) == 0) {
-      printf("%s is %s\n", arg, full_path);
+      printf("%s is %s\n", args[1], full_path);
       found = 1;
       break;
     }
@@ -60,12 +83,13 @@ void handle_type(const char *arg) {
   }
 
   if (!found) {
-    printf("%s: not found\n", arg); // if nothing matched in PATH
+    printf("%s: not found\n", args[1]);
   }
 
   free(path_copy);
 }
 
+// Handle pwd command (prints current directory)
 void handle_pwd() {
   char full_path[MAXIMUM_PATH];
   if (getcwd(full_path, sizeof(full_path)) != NULL) {
@@ -75,41 +99,55 @@ void handle_pwd() {
   }
 }
 
-void handle_cd(const char *path) {
+void handle_cd(char **args) {
   char current_dir[MAXIMUM_PATH];
   char resolved_path[MAXIMUM_PATH];
   char *target_path = NULL;
 
-  if (strcmp(path, "~") == 0) {
+  // Use home directory if no path given or path is ~
+  if (args[1] == NULL || strcmp(args[1], "~") == 0) {
     target_path = getenv("HOME");
     if (target_path == NULL) {
       fprintf(stderr, "cd: HOME not set\n");
       return;
     }
   } else {
-    target_path = (char *)path;
+    target_path = args[1];
   }
 
+  // gets current working dir
   if (getcwd(current_dir, sizeof(current_dir)) == NULL) {
     perror("getcwd failed");
     return;
   }
 
+  // Resolve/converts to full absolute path (handles ./, ../, etc.)
   if (realpath(target_path, resolved_path) == NULL) {
-    fprintf(stderr, "cd: %s: No such file or directory\n", path);
+    fprintf(stderr, "cd: %s: No such file or directory\n", args[1] ? args[1] : "~");
     return;
   }
 
+  // Change to the resolved dir
   if (chdir(resolved_path) != 0) {
-    fprintf(stderr, "cd: %s: No such file or directory\n", path);
+    fprintf(stderr, "cd: %s: No such file or directory\n", args[1] ? args[1] : "~");
   }
 }
 
 void run_external_cmd(char **args) {
   char *path_env = getenv("PATH");
-  char *path_copy = strdup(path_env);
+  if (path_env == NULL) {
+    fprintf(stderr, "PATH not set\n");
+    return;
+  }
+
+  char *path_copy = strdup(path_env); // make a copy since strtok modifies the string
+  if (path_copy == NULL) {
+    fprintf(stderr, "Memory allocation failed\n");
+    return;
+  }
+
   char *dir = strtok(path_copy, ":");
-  char full_path[256];
+  char full_path[MAXIMUM_PATH];
   int found = 0;
 
   while (dir != NULL) {
@@ -122,7 +160,7 @@ void run_external_cmd(char **args) {
   }
 
   if (!found) {
-    printf("%s: command not found\n", args[0]);
+    fprintf(stderr, "%s: command not found\n", args[0]);
     free(path_copy);
     return;
   }
@@ -145,10 +183,10 @@ void run_external_cmd(char **args) {
 
 int main() {
   setbuf(stdout, NULL); // disables output buffering so we see "$ " right away
+  char input[MAX_INPUT]; // storage for the user's input
+  char *args[MAX_ARGS]; // array to hold command and arguments
 
-  char input[MAX_INPUT]; // storage for the user's input (up to 127 characters + null terminator)
-
-  while (1) { // infinite loop – keeps the shell running until break
+  while (1) {
     printf("$ ");
 
     // fgets() returns NULL if the user types Ctrl+D (EOF)
@@ -156,39 +194,29 @@ int main() {
       break; // if Ctrl+D is pressed (EOF), exit the loop and end the shell
     }
 
-    input[strcspn(input, "\n")] = '\0';
+    input[strcspn(input, "\n")] = '\0'; // remove newline
 
-    if (strncmp(input, "echo", 4) == 0) {
-      handle_echo(input);
-    } else if (strncmp(input, "type ", CMD_OFFSET) == 0) {
-      handle_type(input + CMD_OFFSET);
-    } else if (strcmp(input, "exit 0") == 0) {
-      exit(0);
-    } else if (strcmp(input, "pwd") == 0) {
+    // Parse input into args
+    parse_input(input, args);
+
+    // Skip if no command entered
+    if (args[0] == NULL) {
+      continue;
+    }
+
+    // Check for builtins
+    if (strcmp(args[0], "echo") == 0) {
+      handle_echo(args);
+    } else if (strcmp(args[0], "type") == 0) {
+      handle_type(args);
+    } else if (strcmp(args[0], "pwd") == 0) {
       handle_pwd();
+    } else if (strcmp(args[0], "cd") == 0) {
+      handle_cd(args);
+    } else if (strcmp(args[0], "exit") == 0 && args[1] != NULL && strcmp(args[1], "0") == 0) {
+      exit(0);
     } else {
-      // parse input into args
-      char *args[MAX_ARGS];
-      int i = 0;
-
-      char *token = strtok(input, " "); // get first word
-      while (token != NULL && i < MAX_ARGS - 1) {
-        args[i++] = token; // store it
-        token = strtok(NULL, " "); // get next word
-      }
-      args[i] = NULL; // terminate list
-
-      if (args[0] != NULL) {
-        if (strcmp(args[0], "cd") == 0) {
-          if (args[1] == NULL) {
-            handle_cd("~");
-          } else {
-            handle_cd(args[1]);
-          }
-        } else {
-          run_external_cmd(args);
-        }
-      }
+      run_external_cmd(args);
     }
   }
 
