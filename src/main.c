@@ -77,7 +77,7 @@ void handle_pwd() {
 
 void handle_cd(const char*path) {
   if (chdir(path) != 0) {
-    fprintf(stderr, "cd: %s No such file or directory\n", path);
+    fprintf(stderr, "cd: %s: No such file or directory\n", path);
   }
 }
 
