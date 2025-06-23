@@ -14,6 +14,7 @@ int is_builtin(const char *cmd) {
   return strcmp(cmd, "echo") == 0 ||
          strcmp(cmd, "exit") == 0 ||
          strcmp(cmd, "pwd") == 0 ||
+         strcmp(cmd, "cd") == 0 ||
          strcmp(cmd, "type") == 0;
 }
 
@@ -71,6 +72,12 @@ void handle_pwd() {
     printf("%s\n", full_path);
   } else {
     perror("getcwd failed");
+  }
+}
+
+void handle_cd(const char*path) {
+  if (chdir(path) != 0) {
+    fprintf(stderr, "cd: %s No such file or directory\n", path);
   }
 }
 
@@ -163,7 +170,14 @@ int main() {
 
       if (args[0] != NULL)
       {
-        run_external_cmd(args);
+        if (strcmp(args[0], "cd") == 0) {
+          if (args[1] != NULL) {
+            handle_cd(args[1]);
+          }
+        } 
+        else {
+          run_external_cmd(args);
+        }
       }
     }
   }
