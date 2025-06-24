@@ -17,15 +17,61 @@ int is_builtin(const char *cmd) {
          strcmp(cmd, "type") == 0;
 }
 
-// Parse input into args
+// Parse input into args, handling single quotes
 void parse_input(char *input, char **args) {
-  int i = 0;
-  char *token = strtok(input, " "); // get first word
-  while (token != NULL && i < MAX_ARGS - 1) {
-    args[i++] = token; // store it
-    token = strtok(NULL, " "); // get next word
+  int arg_index = 0; // Tracks where to store the next argument
+  char *current = input; // Points to the current position in input
+  char buffer[MAX_INPUT]; // Temporary storage for building an argument
+  int buffer_index = 0; // Tracks position in buffer
+
+  while (*current != '\0' && arg_index < MAX_ARGS - 1) {
+    // Skips leading spaces
+    while (*current == ' ') {
+      current++;
+    }
+
+    // If we hit a single quote
+    if (*current == '\'') {
+      current++; // Move past the opening quote
+      buffer_index = 0; // Reset buffer
+
+      // Copy all until closing quote
+      while (*current != '\0' && *current != '\'') {
+        if (buffer_index < MAX_INPUT - 1) {
+          buffer[buffer_index++] = *current;
+        }
+        current++;
+      }
+
+      // move past closing quote
+      if (*current == '\'') {
+        current++;
+      }
+
+      if (buffer_index > 0) {
+        buffer[buffer_index] = '\0'; 
+        args[arg_index] = strdup(buffer); 
+        arg_index++;
+      }
+    } else if (*current != '\0') {
+      // Handle unquoted text
+      buffer_index = 0;
+      while (*current != '\0' && *current != ' ' && *current != '\'') {
+        if (buffer_index < MAX_INPUT - 1) {
+          buffer[buffer_index++] = *current;
+        }
+        current++;
+      }
+
+      if (buffer_index > 0) {
+        buffer[buffer_index] = '\0';
+        args[arg_index] = strdup(buffer);
+        arg_index++;
+      }
+    }
   }
-  args[i] = NULL;
+
+  args[arg_index] = NULL; // Mark the end of arguments
 }
 
 // Handle echo command (prints args after echo)
@@ -218,6 +264,11 @@ int main() {
     } else {
       run_external_cmd(args);
     }
+  }
+
+  // free alloc'd args
+  for (int i = 0; args[i] != NULL; i++) {
+    free(args[i]);
   }
 
   return 0;
