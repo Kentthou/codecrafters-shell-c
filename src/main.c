@@ -1,204 +1,275 @@
-/*
- * Mini Shell with Trie-based Autocomplete (Beginner-Friendly)
- * ----------------------------------------------------------
- * Supports builtins: echo, exit, pwd, cd, type
- * Handles simple quoting, I/O redirection, and external commands
- * Uses a Trie for fast builtin autocompletion via <TAB>
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/types.h>
-#include <sys/wait.h>
 #include <fcntl.h>
+#include <sys/wait.h>
 #include <readline/readline.h>
 #include <readline/history.h>
 
-#define MAX_INPUT 128
-#define MAX_ARGS 16
-#define MAX_PATH 4096
+#define MAX_INPUT     128
+#define MAX_ARGS      16
+#define MAX_PATH_LEN 4096
+#define MAX_MATCHES   16
 
-// ===== Trie definitions for autocomplete =====
 typedef struct TrieNode {
-    char ch;
+    struct TrieNode *children[26];
     int is_end;
-    struct TrieNode *first;   // first child
-    struct TrieNode *next;    // next sibling
+    char *word;  // full command stored at word-end
 } TrieNode;
 
-// Create a new Trie node for character c
-static TrieNode* trie_node(char c) {
-    TrieNode *n = malloc(sizeof(TrieNode));
-    n->ch = c;
-    n->is_end = 0;
-    n->first = n->next = NULL;
+TrieNode *new_node() {
+    TrieNode *n = calloc(1, sizeof(TrieNode));
     return n;
 }
 
-// Insert word into trie rooted at root
-static void trie_insert(TrieNode *root, const char *word) {
+// Insert a word into the trie
+void trie_insert(TrieNode *root, const char *s) {
     TrieNode *cur = root;
-    for (; *word; word++) {
-        TrieNode *p = cur->first, *prev = NULL;
-        while (p && p->ch != *word) prev = p, p = p->next;
-        if (!p) {
-            p = trie_node(*word);
-            if (prev) prev->next = p;
-            else        cur->first = p;
-        }
-        cur = p;
+    for (; *s; ++s) {
+        char c = *s;
+        if (c < 'a' || c > 'z') continue;
+        int idx = c - 'a';
+        if (!cur->children[idx])
+            cur->children[idx] = new_node();
+        cur = cur->children[idx];
     }
     cur->is_end = 1;
+    cur->word = strdup(s - strlen(s)); // point back to full word
 }
 
-// Find trie node matching prefix; return node or NULL
-static TrieNode* trie_find(TrieNode *root, const char *pref) {
+// Recursively collect all words under a trie node
+void collect_words(TrieNode *node, char *matches[], int *count) {
+    if (*count >= MAX_MATCHES || !node) return;
+    if (node->is_end) {
+        matches[(*count)++] = node->word;
+    }
+    for (int i = 0; i < 26; i++) {
+        if (node->children[i])
+            collect_words(node->children[i], matches, count);
+    }
+}
+
+// Find the trie node matching the prefix
+TrieNode *find_prefix_node(TrieNode *root, const char *prefix) {
     TrieNode *cur = root;
-    for (; *pref && cur; pref++) {
-        TrieNode *p = cur->first;
-        while (p && p->ch != *pref) p = p->next;
-        cur = p;
+    for (; *prefix; ++prefix) {
+        char c = *prefix;
+        if (c < 'a' || c > 'z') return NULL;
+        cur = cur->children[c - 'a'];
+        if (!cur) return NULL;
     }
     return cur;
 }
 
-// Recursively collect words from node, assemble into buffer
-static void trie_collect(TrieNode *node, char *buf, int depth,
-                         char **out, int *count) {
-    if (!node) return;
-    if (node->is_end) {
-        buf[depth] = '\0';
-        out[(*count)++] = strdup(buf);
+void handle_echo(char **args) {
+    for (int i = 1; args[i]; i++) {
+        printf("%s", args[i]);
+        if (args[i+1]) printf(" ");
     }
-    for (TrieNode *c = node->first; c; c = c->next) {
-        buf[depth] = c->ch;
-        trie_collect(c, buf, depth+1, out, count);
-    }
+    printf("\n");
 }
 
-// Readline generator for completions
-static char *gen_match(const char *text, int state) {
-    static TrieNode *root;
-    static char *matches[10];
-    static int nmatch, idx;
-    static int init;
+void handle_exit(char **args) {
+    exit(0);
+}
 
-    if (!init) {
-        root = trie_node('\0');
-        trie_insert(root, "echo");
-        trie_insert(root, "exit");
-        trie_insert(root, "pwd");
-        trie_insert(root, "cd");
-        trie_insert(root, "type");
-        init = 1;
+void handle_pwd(char **args) {
+    char cwd[MAX_PATH_LEN];
+    if (getcwd(cwd, sizeof(cwd)))
+        printf("%s\n", cwd);
+    else
+        perror("pwd");
+}
+
+void handle_cd(char **args) {
+    char *target = args[1] ? args[1] : getenv("HOME");
+    if (!target) {
+        fprintf(stderr, "cd: HOME not set\n");
+        return;
     }
+    if (chdir(target) != 0)
+        perror("cd");
+}
+
+void handle_type(char **args) {
+    if (!args[1]) {
+        fprintf(stderr, "type: missing argument\n");
+        return;
+    }
+    // Check built-ins
+    extern TrieNode *builtin_trie;
+    TrieNode *n = find_prefix_node(builtin_trie, args[1]);
+    if (n && n->is_end) {
+        printf("%s is a shell builtin\n", args[1]);
+        return;
+    }
+    // Otherwise search $PATH
+    char *path = getenv("PATH");
+    if (!path) { fprintf(stderr, "PATH not set\n"); return; }
+    char *copy = strdup(path), *dir = strtok(copy, ":");
+    char full[MAX_PATH_LEN];
+    while (dir) {
+        snprintf(full, sizeof(full), "%s/%s", dir, args[1]);
+        if (access(full, X_OK) == 0) {
+            printf("%s is %s\n", args[1], full);
+            free(copy);
+            return;
+        }
+        dir = strtok(NULL, ":");
+    }
+    printf("%s: not found\n", args[1]);
+    free(copy);
+}
+
+struct {
+    const char *name;
+    void (*func)(char **);
+} builtins[] = {
+    { "echo", handle_echo },
+    { "exit", handle_exit },
+    { "pwd",  handle_pwd  },
+    { "cd",   handle_cd   },
+    { "type", handle_type},
+    { NULL,   NULL        }
+};
+
+TrieNode *builtin_trie;
+
+// Readline completion functions
+static char *matches[MAX_MATCHES];
+static int  match_count, match_index;
+
+static char *trie_generator(const char *text, int state) {
     if (state == 0) {
-        nmatch = idx = 0;
-        int len = strlen(text);
-        TrieNode *node = trie_find(root, text);
-        char buf[32];
-        strcpy(buf, text);
-        if (node) trie_collect(node, buf, len, matches, &nmatch);
+        // first call: build match list
+        match_index = 0;
+        match_count = 0;
+        TrieNode *p = find_prefix_node(builtin_trie, text);
+        if (p) collect_words(p, matches, &match_count);
     }
-    return (idx < nmatch ? matches[idx++] : NULL);
-}
-
-// Hook into readline for <TAB> completion
-static char **myshell_completion(const char *text, int start, int end) {
-    if (start == 0) {
-        rl_completion_append_character = ' ';
-        return rl_completion_matches(text, gen_match);
-    }
+    if (match_index < match_count)
+        return strdup(matches[match_index++]);
     return NULL;
 }
 
-// Simple split by whitespace (no quotes)
-static void split_args(char *s, char **argv) {
-    int i = 0;
-    char *tok = strtok(s, " \t");
-    while (tok && i < MAX_ARGS-1) {
-        argv[i++] = tok;
-        tok = strtok(NULL, " \t");
-    }
-    argv[i] = NULL;
+static char **my_completion(const char *text, int start, int end) {
+    // only autocomplete first word (the command)
+    if (start == 0)
+        return rl_completion_matches(text, trie_generator);
+    return NULL;
 }
 
-// Main loop
+/* Input parsing (simple whitespace split) */
+
+void parse_input(char *input, char **args) {
+    int i = 0, arg = 0;
+    char *token = strtok(input, " \t");
+    while (token && arg < MAX_ARGS - 1) {
+        args[arg++] = strdup(token);
+        token = strtok(NULL, " \t");
+    }
+    args[arg] = NULL;
+}
+
+/* ======== Run external commands ======== */
+
+void run_external(char **args) {
+    char *path = getenv("PATH");
+    if (!path) { fprintf(stderr, "PATH not set\n"); return; }
+    char *copy = strdup(path), *dir = strtok(copy, ":");
+    char full[MAX_PATH_LEN];
+    while (dir) {
+        snprintf(full, sizeof(full), "%s/%s", dir, args[0]);
+        if (access(full, X_OK) == 0) {
+            pid_t pid = fork();
+            if (pid == 0) {
+                execv(full, args);
+                perror("execv");
+                exit(1);
+            }
+            waitpid(pid, NULL, 0);
+            free(copy);
+            return;
+        }
+        dir = strtok(NULL, ":");
+    }
+    fprintf(stderr, "%s: command not found\n", args[0]);
+    free(copy);
+}
+
+/* ======== Main loop ======== */
+
 int main() {
-    rl_readline_name = "myshell";
-    rl_attempted_completion_function = myshell_completion;
-    using_history();
+    // build trie of built-ins
+    builtin_trie = new_node();
+    for (int i = 0; builtins[i].name; i++)
+        trie_insert(builtin_trie, builtins[i].name);
+
+    // configure readline
+    rl_readline_name = "mysh";
+    rl_attempted_completion_function = my_completion;
+    rl_completion_append_character = ' ';
 
     while (1) {
         char *line = readline("$ ");
-        if (!line) break;
+        if (!line) {
+            printf("\n");
+            break;
+        }
         if (*line) add_history(line);
-        char buf[MAX_INPUT]; strncpy(buf, line, MAX_INPUT-1);
+
+        // handle redirection
+        int rd_fd = -1, saved_fd = -1;
+        char *args[MAX_ARGS];
+        parse_input(line, args);
         free(line);
 
-        // handle redirection tokens: >, >>, 2>, 2>>
-        char *argv[MAX_ARGS];
-        split_args(buf, argv);
-        if (!argv[0]) continue;
-
-        int fd = -1, saved = -1, mode = 0;  // mode: 1=stdout,2=stderr
-        for (int i=0; argv[i]; i++) {
-            if (strcmp(argv[i], ">")==0 || strcmp(argv[i], ">>")==0 ||
-                strcmp(argv[i], "2>")==0 || strcmp(argv[i], "2>>")==0) {
-                mode = (argv[i][0]=='2' ? 2 : 1);
-                int append = (strstr(argv[i], ">>")!=NULL);
-                char *file = argv[i+1];
-                argv[i] = NULL;
-                saved = dup(mode);
-                fd = open(file, O_CREAT | O_WRONLY | (append?O_APPEND:O_TRUNC), 0666);
-                dup2(fd, mode);
+        // look for > or >> or 2> etc.
+        for (int i = 0; args[i]; i++) {
+            if (strchr(args[i], '>')) {
+                int fdnum = (args[i][1] == '>') ? 1 : 1;  // only stdout in this simple version
+                int append = (args[i][1] == '>');
+                if (args[i+1]) {
+                    rd_fd = open(args[i+1],
+                                 O_WRONLY | O_CREAT | (append ? O_APPEND : O_TRUNC),
+                                 0666);
+                    saved_fd = dup(fdnum);
+                    dup2(rd_fd, fdnum);
+                    args[i] = NULL;
+                }
                 break;
             }
         }
 
-        // Builtin: echo
-        if (strcmp(argv[0], "echo")==0) {
-            for (int i=1; argv[i]; i++)
-                printf("%s%s", argv[i], argv[i+1]?" ":"\n");
+        if (!args[0]) {
+            // nothing left after stripping redirection
         }
-        // exit
-        else if (strcmp(argv[0], "exit")==0) break;
-        // pwd
-        else if (strcmp(argv[0], "pwd")==0) {
-            char cwd[MAX_PATH]; if (getcwd(cwd,MAX_PATH)) puts(cwd);
-        }
-        // cd
-        else if (strcmp(argv[0], "cd")==0) {
-            char *d = argv[1] ? argv[1] : getenv("HOME");
-            chdir(d);
-        }
-        // type
-        else if (strcmp(argv[0], "type")==0) {
-            if (!argv[1]) printf("type: missing arg\n");
-            else {
-                int found=0;
-                for (char *b: (char*[]){"echo","exit","pwd","cd","type",NULL})
-                    if (!strcmp(argv[1], b)) { printf("%s is a shell builtin\n",argv[1]); found=1; }
-                if (!found) printf("%s: not found\n",argv[1]);
+        // check built-ins
+        else {
+            int ran = 0;
+            for (int i = 0; builtins[i].name; i++) {
+                if (strcmp(args[0], builtins[i].name) == 0) {
+                    builtins[i].func(args);
+                    ran = 1;
+                    break;
+                }
+            }
+            if (!ran) {
+                run_external(args);
             }
         }
-        // external
-        else {
-            pid_t pid = fork();
-            if (pid==0) execvp(argv[0], argv);
-            else if (pid>0) waitpid(pid,NULL,0);
-            else perror("fork");
+
+        // restore fds if needed
+        if (saved_fd != -1) {
+            dup2(saved_fd, STDOUT_FILENO);
+            close(saved_fd);
+            close(rd_fd);
         }
 
-        // restore redirection
-        if (fd!=-1) {
-            dup2(saved, mode);
-            close(fd); close(saved);
-        }
+        // free args
+        for (int i = 0; args[i]; i++)
+            free(args[i]);
     }
-
-    printf("Goodbye!\n");
     return 0;
 }
