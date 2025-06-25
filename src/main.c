@@ -38,6 +38,14 @@ void parse_input(char *input, char **args) {
       continue;
     }
 
+    if (c == '\\' & !in_single_quote) {
+      i++;
+      if (input[i] != '\0') {
+        arg_buf[buf_index++] = input[i++];
+      }
+      continue;
+    }
+
     if (!in_single_quote && !in_double_quote && (c == ' ' || input[i] == '\t')) {
       if (buf_index > 0) {
         arg_buf[buf_index] = '\0';
