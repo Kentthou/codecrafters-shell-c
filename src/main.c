@@ -230,15 +230,23 @@ int main() {
     }
 
     // Detect redirection
-    int redirect_type = 0; // 0: none, 1: stdout, 2: stderr
+    int redirect_fd_num = 0; // 0: none, 1: stdout, 2: stderr
+    int append_mode = 0;     // 0: truncate, 1: append
     int redirect_index = -1;
     for (int j = 0; args[j] != NULL; j++) {
-      if (strcmp(args[j], "2>") == 0) {
-        redirect_type = 2;
+      if (strcmp(args[j], ">") == 0 || strcmp(args[j], "1>") == 0) {
+        redirect_fd_num = 1;
+        append_mode = 0;
         redirect_index = j;
         break;
-      } else if (strcmp(args[j], ">") == 0 || strcmp(args[j], "1>") == 0) {
-        redirect_type = 1;
+      } else if (strcmp(args[j], ">>") == 0 || strcmp(args[j], "1>>") == 0) {
+        redirect_fd_num = 1;
+        append_mode = 1;
+        redirect_index = j;
+        break;
+      } else if (strcmp(args[j], "2>") == 0) {
+        redirect_fd_num = 2;
+        append_mode = 0;
         redirect_index = j;
         break;
       }
@@ -254,42 +262,31 @@ int main() {
     int original_fd = -1;
     int redirect_fd = -1;
     if (redirect_file != NULL) {
-      redirect_fd = open(redirect_file, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+      int flags = O_WRONLY | O_CREAT;
+      if (append_mode) {
+        flags |= O_APPEND;
+      } else {
+        flags |= O_TRUNC;
+      }
+      redirect_fd = open(redirect_file, flags, 0666);
       if (redirect_fd == -1) {
         perror("open");
         free_args(args);
         continue;
       }
-      if (redirect_type == 1) {
-        original_fd = dup(1);
-        if (original_fd == -1) {
-          perror("dup");
-          close(redirect_fd);
-          free_args(args);
-          continue;
-        }
-        if (dup2(redirect_fd, 1) == -1) {
-          perror("dup2");
-          close(redirect_fd);
-          close(original_fd);
-          free_args(args);
-          continue;
-        }
-      } else if (redirect_type == 2) {
-        original_fd = dup(2);
-        if (original_fd == -1) {
-          perror("dup");
-          close(redirect_fd);
-          free_args(args);
-          continue;
-        }
-        if (dup2(redirect_fd, 2) == -1) {
-          perror("dup2");
-          close(redirect_fd);
-          close(original_fd);
-          free_args(args);
-          continue;
-        }
+      original_fd = dup(redirect_fd_num);
+      if (original_fd == -1) {
+        perror("dup");
+        close(redirect_fd);
+        free_args(args);
+        continue;
+      }
+      if (dup2(redirect_fd, redirect_fd_num) == -1) {
+        perror("dup2");
+        close(redirect_fd);
+        close(original_fd);
+        free_args(args);
+        continue;
       }
     }
 
@@ -305,11 +302,7 @@ int main() {
     } else if (strcmp(args[0], "exit") == 0 && args[1] != NULL && strcmp(args[1], "0") == 0) {
       free_args(args);
       if (redirect_file != NULL) {
-        if (redirect_type == 1) {
-          dup2(original_fd, 1);
-        } else if (redirect_type == 2) {
-          dup2(original_fd, 2);
-        }
+        dup2(original_fd, redirect_fd_num);
         close(original_fd);
         close(redirect_fd);
       }
@@ -320,14 +313,8 @@ int main() {
 
     // Restore file descriptor
     if (redirect_file != NULL) {
-      if (redirect_type == 1) {
-        if (dup2(original_fd, 1) == -1) {
-          perror("dup2 restore");
-        }
-      } else if (redirect_type == 2) {
-        if (dup2(original_fd, 2) == -1) {
-          perror("dup2 restore");
-        }
+      if (dup2(original_fd, redirect_fd_num) == -1) {
+        perror("dup2 restore");
       }
       close(original_fd);
       close(redirect_fd);
