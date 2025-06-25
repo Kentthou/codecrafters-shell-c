@@ -234,8 +234,13 @@ int main() {
     int append_mode = 0;     // 0: truncate, 1: append
     int redirect_index = -1;
     for (int j = 0; args[j] != NULL; j++) {
-      if (strcmp(args[j], ">") == 0 || strcmp(args[j], "1>") == 0) {
-        redirect_fd_num = 1;
+      if (strcmp(args[j], "2>>") == 0) {
+        redirect_fd_num = 2;
+        append_mode = 1;
+        redirect_index = j;
+        break;
+      } else if (strcmp(args[j], "2>") == 0) {
+        redirect_fd_num = 2;
         append_mode = 0;
         redirect_index = j;
         break;
@@ -244,8 +249,8 @@ int main() {
         append_mode = 1;
         redirect_index = j;
         break;
-      } else if (strcmp(args[j], "2>") == 0) {
-        redirect_fd_num = 2;
+      } else if (strcmp(args[j], ">") == 0 || strcmp(args[j], "1>") == 0) {
+        redirect_fd_num = 1;
         append_mode = 0;
         redirect_index = j;
         break;
@@ -255,7 +260,7 @@ int main() {
     char *redirect_file = NULL;
     if (redirect_index != -1 && args[redirect_index + 1] != NULL) {
       redirect_file = args[redirect_index + 1];
-      args[redirect_index] = NULL; // Terminate command args
+      args[redirect_index] = NULL; // terminate command args
     }
 
     // Set up redirection
