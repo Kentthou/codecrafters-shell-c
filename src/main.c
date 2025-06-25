@@ -1,6 +1,6 @@
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -17,58 +17,56 @@ int is_builtin(const char *cmd) {
          strcmp(cmd, "type") == 0;
 }
 
+void free_args(char **args) {
+  for (int i = 0; args[i] != NULL; i++) {
+    free(args[i]);
+  }
+}
+
 void parse_input(char *input, char **args) {
-  int i = 0, arg_index = 0;
-  char arg_buf[MAX_INPUT];
-  int buf_index = 0;
-  int in_single_quote = 0, in_double_quote = 0;
+  int argc = 0;
+  int i = 0;
+  int len = strlen(input);
 
-  while (input[i] != '\0') {
-    char c = input[i];
+  while (i < len) {
+    while (i < len && (input[i] == ' ' || input[i] == '\t')) i++;  // Skip whitespace
+    if (i >= len) break;
 
-    if (c == '\\') {
-      // Escape next character
-      if (input[i + 1] != '\0') {
-        arg_buf[buf_index++] = input[i + 1];
-        i += 2;
+    char *arg = calloc(MAX_INPUT, sizeof(char));
+    int arg_i = 0;
+    int in_single = 0, in_double = 0;
+
+    while (i < len) {
+      char c = input[i];
+
+      if (c == '\'' && !in_double) {
+        in_single = !in_single;
+        i++;
+      } else if (c == '"' && !in_single) {
+        in_double = !in_double;
+        i++;
+      } else if (c == '\\') {
+        if (i + 1 < len) {
+          arg[arg_i++] = input[i + 1];
+          i += 2;
+        } else {
+          i++; // stray backslash
+        }
+      } else if (!in_single && !in_double && (c == ' ' || c == '\t')) {
+        i++;
+        break;
       } else {
-        i++; // lone backslash at end
+        arg[arg_i++] = c;
+        i++;
       }
-      continue;
     }
 
-    if (c == '\'' && !in_double_quote) {
-      in_single_quote = !in_single_quote;
-      i++;
-      continue;
-    }
-
-    if (c == '"' && !in_single_quote) {
-      in_double_quote = !in_double_quote;
-      i++;
-      continue;
-    }
-
-    if (!in_single_quote && !in_double_quote && (c == ' ' || c == '\t')) {
-      if (buf_index > 0) {
-        arg_buf[buf_index] = '\0';
-        args[arg_index++] = strdup(arg_buf);
-        buf_index = 0;
-      }
-      i++;
-      continue;
-    }
-
-    arg_buf[buf_index++] = c;
-    i++;
+    arg[arg_i] = '\0';
+    args[argc++] = arg;
+    if (argc >= MAX_ARGS - 1) break;
   }
 
-  if (buf_index > 0) {
-    arg_buf[buf_index] = '\0';
-    args[arg_index++] = strdup(arg_buf);
-  }
-
-  args[arg_index] = NULL;
+  args[argc] = NULL;
 }
 
 void handle_echo(char **args) {
@@ -195,12 +193,6 @@ void run_external_cmd(char **args) {
   free(path_copy);
 }
 
-void free_args(char **args) {
-  for (int i = 0; args[i] != NULL; i++) {
-    free(args[i]);
-  }
-}
-
 int main() {
   setbuf(stdout, NULL);
   char input[MAX_INPUT];
@@ -214,7 +206,6 @@ int main() {
     }
 
     input[strcspn(input, "\n")] = '\0';
-
     parse_input(input, args);
 
     if (args[0] == NULL) {
