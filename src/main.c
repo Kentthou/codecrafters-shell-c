@@ -17,21 +17,28 @@ int is_builtin(const char *cmd) {
          strcmp(cmd, "type") == 0;
 }
 
-// Custom parser that handles single-quoted arguments
 void parse_input(char *input, char **args) {
   int i = 0, arg_index = 0;
   char arg_buf[MAX_INPUT];
   int buf_index = 0;
-  int in_single_quote = 0;
+  int in_single_quote = 0, in_double_quote = 0;
 
   while (input[i] != '\0') {
-    if (input[i] == '\'') {
+    char  c = input[i];
+
+    if (c == '\'' && !in_double_quote) {
       in_single_quote = !in_single_quote;
       i++;
       continue;
     }
 
-    if (!in_single_quote && (input[i] == ' ' || input[i] == '\t')) {
+    if (c == '"' && !in_single_quote) {
+      in_double_quote = !in_double_quote;
+      i++;
+      continue;
+    }
+
+    if (!in_single_quote && !in_double_quote (c == ' ' || input[i] == '\t')) {
       if (buf_index > 0) {
         arg_buf[buf_index] = '\0';
         args[arg_index++] = strdup(arg_buf);
@@ -41,7 +48,8 @@ void parse_input(char *input, char **args) {
       continue;
     }
 
-    arg_buf[buf_index++] = input[i++];
+    arg_buf[buf_index++] = c;
+    i++;
   }
 
   if (buf_index > 0) {
@@ -52,7 +60,6 @@ void parse_input(char *input, char **args) {
   args[arg_index] = NULL;
 }
 
-// Built-in: echo
 void handle_echo(char **args) {
   for (int i = 1; args[i] != NULL; i++) {
     printf("%s", args[i]);
@@ -63,7 +70,6 @@ void handle_echo(char **args) {
   printf("\n");
 }
 
-// Built-in: type
 void handle_type(char **args) {
   if (args[1] == NULL) {
     fprintf(stderr, "type: missing argument\n");
