@@ -33,7 +33,15 @@ void parse_input(char *input, char **args) {
         arg_buf[buf_index++] = c;
       }
     } else if (in_double_quote) {
-      if (c == '"') {
+      if (c == '\\') {
+        if (input[i + 1] == '"' || input[i + 1] == '\\') {
+          arg_buf[buf_index++] = input[i + 1];
+          i++;
+        } else {
+          arg_buf[buf_index++] = '\\';
+          // Next character will be handled in the next iteration
+        }
+      } else if (c == '"') {
         in_double_quote = 0;
       } else {
         arg_buf[buf_index++] = c;
