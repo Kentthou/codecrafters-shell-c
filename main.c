@@ -36,7 +36,19 @@ void parse_input(char *input, char **args) {
 
     // Process character after backslash
     if (backslash) {
-      arg_buf[buf_index++] = c;
+      if (c == 'n') {
+        arg_buf[buf_index++] = '\n';
+      } else if (c == 't') {
+        arg_buf[buf_index++] = '\t';
+      } else if (c == '\\' || c == '\'' || c == '"') {
+        arg_buf[buf_index++] = c;
+      } else if (c >= '0' && c <= '9') {
+        // Handle numeric characters literally
+        arg_buf[buf_index++] = c;
+      } else {
+        // Preserve other characters literally
+        arg_buf[buf_index++] = c;
+      }
       backslash = 0;
       i++;
       continue;
