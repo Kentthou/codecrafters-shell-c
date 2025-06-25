@@ -23,69 +23,58 @@ void parse_input(char *input, char **args) {
   char *current = input; // Points to the current position in input
   char buffer[MAX_INPUT]; // Temporary storage for building an argument
   int buffer_index = 0; // Tracks position in buffer
+  int in_quotes = 0; // Tracks if we're inside a quoted string
 
   while (*current != '\0' && arg_index < MAX_ARGS - 1) {
-    // Skip leading spaces
-    while (*current == ' ') {
-      current++;
+    // Skip leading spaces outside quotes
+    if (!in_quotes) {
+      while (*current == ' ') {
+        current++;
+      }
     }
 
     // If we hit a single quote
     if (*current == '\'') {
-      current++; // Move past the opening quote
-
-      // Copy everything until the closing quote
-      while (*current != '\0' && *current != '\'') {
-        if (buffer_index < MAX_INPUT - 1) {
-          buffer[buffer_index++] = *current;
-        }
-        current++;
-      }
-
-      // Move past the closing quote, if it exists
-      if (*current == '\'') {
-        current++;
-      }
-
-      // Handle adjacent quoted strings (e.g., 'hello''world')
-      while (*current == '\'') {
-        current++; // Skip opening quote of next quoted string
-        while (*current != '\0' && *current != '\'') {
-          if (buffer_index < MAX_INPUT - 1) {
-            buffer[buffer_index++] = *current;
-          }
-          current++;
-        }
+      if (!in_quotes) {
+        in_quotes = 1; // Start quoted section
+        current++; // Move past opening quote
+        continue;
+      } else {
+        in_quotes = 0; // End quoted section
+        current++; // Move past closing quote
+        // If next character is another quote, continue appending (handles 'hello''world')
         if (*current == '\'') {
-          current++; // Skip closing quote
+          in_quotes = 1;
+          current++;
+          continue;
         }
       }
+    }
 
-      // Add the argument if we got something
-      if (buffer_index > 0) {
-        buffer[buffer_index] = '\0'; // End the string
-        args[arg_index] = strdup(buffer); // Copy to args
-        arg_index++;
-        buffer_index = 0; // Reset buffer for next argument
-      }
-    } else if (*current != '\0') {
-      // Handle unquoted text
-      buffer_index = 0;
-      while (*current != '\0' && *current != ' ' && *current != '\'') {
-        if (buffer_index < MAX_INPUT - 1) {
-          buffer[buffer_index++] = *current;
-        }
-        current++;
-      }
-
-      // Add the argument if we got something
+    // If we're in quotes or have a non-space character
+    if (*current != '\0' && (in_quotes || *current != ' ')) {
+      buffer[buffer_index++] = *current;
+      current++;
+    }
+    // If we're not in quotes and hit a space or end of input
+    else if (!in_quotes && (*current == ' ' || *current == '\0')) {
       if (buffer_index > 0) {
         buffer[buffer_index] = '\0'; // End the string
         args[arg_index] = strdup(buffer); // Copy to args
         arg_index++;
         buffer_index = 0; // Reset buffer
       }
+      if (*current != '\0') {
+        current++; // Move past space
+      }
     }
+  }
+
+  // If there's anything left in the buffer, add it as the last argument
+  if (buffer_index > 0 && arg_index < MAX_ARGS - 1) {
+    buffer[buffer_index] = '\0';
+    args[arg_index] = strdup(buffer);
+    arg_index++;
   }
 
   args[arg_index] = NULL; // Mark the end of arguments
@@ -136,7 +125,7 @@ void handle_type(char **args) {
   while (dir != NULL) {
     snprintf(full_path, sizeof(full_path), "%s/%s", dir, args[1]);
 
-  if (access(full_path, X_OK) == 0) {
+    if (access(full_path, X_OK) == 0) {
       printf("%s is %s\n", args[1], full_path);
       found = 1;
       break;
