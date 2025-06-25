@@ -22,47 +22,26 @@ void parse_input(char *input, char **args) {
   char arg_buf[MAX_INPUT];
   int buf_index = 0;
   int in_single_quote = 0, in_double_quote = 0;
-  int backslash = 0;
 
   while (input[i] != '\0') {
     char c = input[i];
 
-    // Handle backslash
-    if (c == '\\' && !backslash && !in_single_quote) {
-      backslash = 1;
+    // Handle backslash escape outside quotes or in double quotes
+    if (c == '\\' && !in_single_quote && input[i + 1] != '\0') {
+      arg_buf[buf_index++] = input[++i]; // Take next char literally
       i++;
       continue;
     }
 
-    // Process character after backslash
-    if (backslash) {
-      if (c == 'n') {
-        arg_buf[buf_index++] = '\n';
-      } else if (c == 't') {
-        arg_buf[buf_index++] = '\t';
-      } else if (c == '\\' || c == '\'' || c == '"') {
-        arg_buf[buf_index++] = c;
-      } else if (c >= '0' && c <= '9') {
-        // Handle numeric characters literally
-        arg_buf[buf_index++] = c;
-      } else {
-        // Preserve other characters literally
-        arg_buf[buf_index++] = c;
-      }
-      backslash = 0;
-      i++;
-      continue;
-    }
-
-    // Handle single quotes
-    if (c == '\'' && !in_double_quote && !backslash) {
+    // Toggle single quotes
+    if (c == '\'' && !in_double_quote) {
       in_single_quote = !in_single_quote;
       i++;
       continue;
     }
 
-    // Handle double quotes
-    if (c == '"' && !in_single_quote && !backslash) {
+    // Toggle double quotes
+    if (c == '"' && !in_single_quote) {
       in_double_quote = !in_double_quote;
       i++;
       continue;
@@ -79,7 +58,7 @@ void parse_input(char *input, char **args) {
       continue;
     }
 
-    // Add character to buffer
+    // Copy character to buffer
     arg_buf[buf_index++] = c;
     i++;
   }
@@ -240,6 +219,7 @@ int main() {
     parse_input(input, args);
 
     if (args[0] == NULL) {
+      free_args(args);
       continue;
     }
 
