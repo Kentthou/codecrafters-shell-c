@@ -4,36 +4,39 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <limits.h>
+#include <errno.h>
 
-#define MAX_INPUT 128
-#define MAX_ARGS 16
-#define MAXIMUM_PATH 4096
+#define MAX_INPUT 1024
+#define MAX_ARGS 64
 
-int is_builtin(const char *cmd) {
-  return strcmp(cmd, "echo") == 0 ||
-         strcmp(cmd, "exit") == 0 ||
-         strcmp(cmd, "pwd") == 0 ||
-         strcmp(cmd, "cd") == 0 ||
-         strcmp(cmd, "type") == 0;
-}
-
-void free_args(char **args) {
-  for (int i = 0; args[i] != NULL; i++) {
-    free(args[i]);
+// Function to decode escape sequences
+char decode_escape(char c) {
+  switch (c) {
+    case 'n': return '\n';
+    case 't': return '\t';
+    case '\\': return '\\';
+    case '\'': return '\'';
+    case '"': return '"';
+    case ' ': return ' ';
+    default:
+      if (c >= '0' && c <= '9') return c;
+      return c;
   }
 }
 
-void parse_input(char *input, char **args) {
-  int argc = 0;
+// Parses input into arguments with escape + quote support
+void parse_input(const char *input, char **args) {
+  int arg_index = 0;
   int i = 0;
   int len = strlen(input);
 
   while (i < len) {
-    while (i < len && (input[i] == ' ' || input[i] == '\t')) i++;  // Skip whitespace
+    while (i < len && (input[i] == ' ' || input[i] == '\t')) i++;
     if (i >= len) break;
 
-    char *arg = calloc(MAX_INPUT, sizeof(char));
-    int arg_i = 0;
+    char *arg = malloc(MAX_INPUT);
+    int j = 0;
     int in_single = 0, in_double = 0;
 
     while (i < len) {
@@ -42,45 +45,81 @@ void parse_input(char *input, char **args) {
       if (c == '\'' && !in_double) {
         in_single = !in_single;
         i++;
+        continue;
       } else if (c == '"' && !in_single) {
         in_double = !in_double;
         i++;
+        continue;
       } else if (c == '\\') {
         if (i + 1 < len) {
-          arg[arg_i++] = input[i + 1];
-          i += 2;
+          arg[j++] = decode_escape(input[++i]);
+          i++;
         } else {
-          i++; // stray backslash
+          i++;
         }
+        continue;
       } else if (!in_single && !in_double && (c == ' ' || c == '\t')) {
         i++;
         break;
       } else {
-        arg[arg_i++] = c;
+        arg[j++] = c;
         i++;
       }
     }
 
-    arg[arg_i] = '\0';
-    args[argc++] = arg;
-    if (argc >= MAX_ARGS - 1) break;
+    arg[j] = '\0';
+    args[arg_index++] = arg;
   }
 
-  args[argc] = NULL;
+  args[arg_index] = NULL;
+}
+
+void free_args(char **args) {
+  for (int i = 0; args[i] != NULL; i++) free(args[i]);
+}
+
+int is_builtin(const char *cmd) {
+  return strcmp(cmd, "echo") == 0 ||
+         strcmp(cmd, "cd") == 0 ||
+         strcmp(cmd, "pwd") == 0 ||
+         strcmp(cmd, "exit") == 0 ||
+         strcmp(cmd, "type") == 0;
 }
 
 void handle_echo(char **args) {
-  for (int i = 1; args[i] != NULL; i++) {
+  for (int i = 1; args[i]; i++) {
     printf("%s", args[i]);
-    if (args[i + 1] != NULL) {
-      printf(" ");
-    }
+    if (args[i + 1]) printf(" ");
   }
   printf("\n");
 }
 
+void handle_pwd() {
+  char cwd[PATH_MAX];
+  if (getcwd(cwd, sizeof(cwd))) {
+    printf("%s\n", cwd);
+  } else {
+    perror("pwd");
+  }
+}
+
+void handle_cd(char **args) {
+  const char *path = args[1];
+  if (!path || strcmp(path, "~") == 0) {
+    path = getenv("HOME");
+    if (!path) {
+      fprintf(stderr, "cd: HOME not set\n");
+      return;
+    }
+  }
+
+  if (chdir(path) != 0) {
+    fprintf(stderr, "cd: %s: No such file or directory\n", path);
+  }
+}
+
 void handle_type(char **args) {
-  if (args[1] == NULL) {
+  if (!args[1]) {
     fprintf(stderr, "type: missing argument\n");
     return;
   }
@@ -96,101 +135,58 @@ void handle_type(char **args) {
     return;
   }
 
-  char *path_copy = strdup(path_env);
-  char *dir = strtok(path_copy, ":");
-  char full_path[MAXIMUM_PATH];
-  int found = 0;
+  char *path = strdup(path_env);
+  char *dir = strtok(path, ":");
+  char full_path[PATH_MAX];
 
-  while (dir != NULL) {
+  while (dir) {
     snprintf(full_path, sizeof(full_path), "%s/%s", dir, args[1]);
     if (access(full_path, X_OK) == 0) {
       printf("%s is %s\n", args[1], full_path);
-      found = 1;
-      break;
+      free(path);
+      return;
     }
     dir = strtok(NULL, ":");
   }
 
-  if (!found) {
-    printf("%s: not found\n", args[1]);
-  }
-
-  free(path_copy);
+  printf("%s: not found\n", args[1]);
+  free(path);
 }
 
-void handle_pwd() {
-  char full_path[MAXIMUM_PATH];
-  if (getcwd(full_path, sizeof(full_path)) != NULL) {
-    printf("%s\n", full_path);
-  } else {
-    perror("getcwd failed");
-  }
-}
-
-void handle_cd(char **args) {
-  char resolved_path[MAXIMUM_PATH];
-  char *target_path = NULL;
-
-  if (args[1] == NULL || strcmp(args[1], "~") == 0) {
-    target_path = getenv("HOME");
-    if (!target_path) {
-      fprintf(stderr, "cd: HOME not set\n");
-      return;
-    }
-  } else {
-    target_path = args[1];
-  }
-
-  if (realpath(target_path, resolved_path) == NULL) {
-    fprintf(stderr, "cd: %s: No such file or directory\n", target_path);
-    return;
-  }
-
-  if (chdir(resolved_path) != 0) {
-    fprintf(stderr, "cd: %s: No such file or directory\n", target_path);
-  }
-}
-
-void run_external_cmd(char **args) {
+void run_external(char **args) {
   char *path_env = getenv("PATH");
   if (!path_env) {
     fprintf(stderr, "PATH not set\n");
     return;
   }
 
-  char *path_copy = strdup(path_env);
-  char *dir = strtok(path_copy, ":");
-  char full_path[MAXIMUM_PATH];
-  int found = 0;
+  char *path = strdup(path_env);
+  char *dir = strtok(path, ":");
+  char full_path[PATH_MAX];
 
-  while (dir != NULL) {
+  while (dir) {
     snprintf(full_path, sizeof(full_path), "%s/%s", dir, args[0]);
     if (access(full_path, X_OK) == 0) {
-      found = 1;
-      break;
+      pid_t pid = fork();
+      if (pid == 0) {
+        execv(full_path, args);
+        perror("execv");
+        exit(1);
+      } else if (pid > 0) {
+        waitpid(pid, NULL, 0);
+        free(path);
+        return;
+      } else {
+        perror("fork");
+        free(path);
+        return;
+      }
     }
     dir = strtok(NULL, ":");
   }
 
-  if (!found) {
-    fprintf(stderr, "%s: command not found\n", args[0]);
-    free(path_copy);
-    return;
-  }
-
-  pid_t pid = fork();
-
-  if (pid == 0) {
-    execv(full_path, args);
-    perror("execv");
-    exit(1);
-  } else if (pid > 0) {
-    waitpid(pid, NULL, 0);
-  } else {
-    perror("fork");
-  }
-
-  free(path_copy);
+  fprintf(stderr, "%s: command not found\n", args[0]);
+  free(path);
 }
 
 int main() {
@@ -201,30 +197,27 @@ int main() {
   while (1) {
     printf("$ ");
 
-    if (fgets(input, sizeof(input), stdin) == NULL) {
-      break;
-    }
-
+    if (!fgets(input, sizeof(input), stdin)) break;
     input[strcspn(input, "\n")] = '\0';
-    parse_input(input, args);
 
-    if (args[0] == NULL) {
-      continue;
-    }
+    parse_input(input, args);
+    if (!args[0]) continue;
 
     if (strcmp(args[0], "echo") == 0) {
       handle_echo(args);
-    } else if (strcmp(args[0], "type") == 0) {
-      handle_type(args);
     } else if (strcmp(args[0], "pwd") == 0) {
       handle_pwd();
     } else if (strcmp(args[0], "cd") == 0) {
       handle_cd(args);
-    } else if (strcmp(args[0], "exit") == 0 && args[1] != NULL && strcmp(args[1], "0") == 0) {
-      free_args(args);
-      exit(0);
+    } else if (strcmp(args[0], "type") == 0) {
+      handle_type(args);
+    } else if (strcmp(args[0], "exit") == 0) {
+      if (args[1] && strcmp(args[1], "0") == 0) {
+        free_args(args);
+        exit(0);
+      }
     } else {
-      run_external_cmd(args);
+      run_external(args);
     }
 
     free_args(args);
