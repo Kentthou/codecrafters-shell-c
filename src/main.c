@@ -79,12 +79,9 @@ void handle_echo(char **args) {
   if (args[1] == NULL) {
     printf("\n"); // prints a blank line
   } else {
-    // Join args[1...n] with spaces
+    // Print args[1...n] without spaces between them
     for (int i = 1; args[i] != NULL; i++) {
       printf("%s", args[i]);
-      if (args[i + 1] != NULL) {
-        printf(" ");
-      }
     }
     printf("\n");
   }
@@ -219,7 +216,7 @@ void run_external_cmd(char **args) {
     exit(1);
   } else if (pid > 0) {
     // parent: wait for child
-    waitpid(pid, NULL, 0);
+    waitpid(NULL, 0);
   } else {
     perror("fork");
   }
@@ -264,11 +261,11 @@ int main() {
     } else {
       run_external_cmd(args);
     }
-  }
 
-  // free alloc'd args
-  for (int i = 0; args[i] != NULL; i++) {
-    free(args[i]);
+    // free alloc'd args
+    for (int i = 0; args[i] != NULL; i++) {
+      free(args[i]);
+    }
   }
 
   return 0;
