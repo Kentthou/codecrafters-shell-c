@@ -39,10 +39,12 @@ void parse_input(char *input, char **args) {
     }
 
     if (c == '\\') {
-      // always preserve backslash and next character literally
       if (input[i + 1] != '\0') {
-        arg_buf[buf_index++] = '\\';
-        arg_buf[buf_index++] = input[i + 1];
+        if (input[i + 1] == ' ') {
+          arg_buf[buf_index++] = ' ';  // escaped space
+        } else {
+          arg_buf[buf_index++] = input[i + 1];  // preserve next char as-is
+        }
         i += 2;
         continue;
       }
