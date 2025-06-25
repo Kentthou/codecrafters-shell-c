@@ -18,15 +18,27 @@ int is_builtin(const char *cmd) {
 }
 
 void parse_input(char *input, char **args) {
-  int i = 0, arg_index = 0;
+  int arg_index = 0;
   char arg_buf[MAX_INPUT];
   int buf_index = 0;
   int in_single_quote = 0, in_double_quote = 0;
+  int i = 0;
 
   while (input[i] != '\0') {
     char c = input[i];
 
-    // Handle backslash escape outside quotes or in double quotes
+    // Skip leading spaces outside quotes
+    if (!in_single_quote && !in_double_quote && (c == ' ' || c == '\t')) {
+      if (buf_index > 0) {
+        arg_buf[buf_index] = '\0';
+        args[arg_index++] = strdup(arg_buf);
+        buf_index = 0;
+      }
+      i++;
+      continue;
+    }
+
+    // Handle backslash escape
     if (c == '\\' && !in_single_quote && input[i + 1] != '\0') {
       arg_buf[buf_index++] = input[++i]; // Take next char literally
       i++;
@@ -43,17 +55,6 @@ void parse_input(char *input, char **args) {
     // Toggle double quotes
     if (c == '"' && !in_single_quote) {
       in_double_quote = !in_double_quote;
-      i++;
-      continue;
-    }
-
-    // Handle spaces outside quotes
-    if (!in_single_quote && !in_double_quote && (c == ' ' || c == '\t')) {
-      if (buf_index > 0) {
-        arg_buf[buf_index] = '\0';
-        args[arg_index++] = strdup(arg_buf);
-        buf_index = 0;
-      }
       i++;
       continue;
     }
@@ -209,7 +210,6 @@ int main() {
 
   while (1) {
     printf("$ ");
-
     if (fgets(input, sizeof(input), stdin) == NULL) {
       break;
     }
