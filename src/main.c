@@ -43,14 +43,14 @@ void parse_input(char *input, char **args) {
         current++;
       }
 
-      // move past closing quote
+      // Move past closing quote
       if (*current == '\'') {
         current++;
       }
 
       if (buffer_index > 0) {
-        buffer[buffer_index] = '\0'; 
-        args[arg_index] = strdup(buffer); 
+        buffer[buffer_index] = '\0';
+        args[arg_index] = strdup(buffer);
         arg_index++;
       }
     } else if (*current != '\0') {
@@ -77,11 +77,20 @@ void parse_input(char *input, char **args) {
 // Handle echo command (prints args after echo)
 void handle_echo(char **args) {
   if (args[1] == NULL) {
-    printf("\n"); // prints a blank line
+    printf("\n"); // Prints a blank line
   } else {
-    // Print args[1...n] without spaces between them
+    // Print args[1...n], no space for adjacent quoted strings
+    int prev_was_quoted = 0; // Tracks if previous arg was from quoted string
     for (int i = 1; args[i] != NULL; i++) {
+      // Assume non-empty args from quoted strings have no leading/trailing spaces
+      if (prev_was_quoted && args[i][0] != '\0') {
+        // Skip space for adjacent quoted strings
+      } else if (args[i + 1] != NULL) {
+        printf(" "); // Add space before non-quoted or non-adjacent args
+      }
       printf("%s", args[i]);
+      // Assume non-empty arg is quoted unless it has spaces
+      prev_was_quoted = (args[i][0] != '\0' && strchr(args[i], ' ') == NULL);
     }
     printf("\n");
   }
@@ -94,10 +103,10 @@ void handle_type(char **args) {
     return;
   }
 
-  // check if shell builtin
+  // Check if shell builtin
   if (is_builtin(args[1])) {
     printf("%s is a shell builtin\n", args[1]);
-    return; // stop here, no need to check PATH
+    return; // Stop here, no need to check PATH
   }
 
   // Get the PATH environment variable
@@ -107,9 +116,9 @@ void handle_type(char **args) {
     return;
   }
 
-  char *path_copy = strdup(path_env); // make a copy since strtok modifies the string
-  char *dir = strtok(path_copy, ":"); // gets the first dir
-  int found = 0; // flag to track if command is found in any PATH dir
+  char *path_copy = strdup(path_env); // Make a copy since strtok modifies the string
+  char *dir = strtok(path_copy, ":"); // Gets the first dir
+  int found = 0; // Flag to track if command is found in any PATH dir
   char full_path[MAXIMUM_PATH];
 
   // Go through each dir in PATH
@@ -122,7 +131,7 @@ void handle_type(char **args) {
       break;
     }
 
-    dir = strtok(NULL, ":"); // move to next dir
+    dir = strtok(NULL, ":"); // Move to next dir
   }
 
   if (!found) {
@@ -158,7 +167,7 @@ void handle_cd(char **args) {
     target_path = args[1];
   }
 
-  // gets current working dir
+  // Gets current working dir
   if (getcwd(current_dir, sizeof(current_dir)) == NULL) {
     perror("getcwd failed");
     return;
@@ -183,7 +192,7 @@ void run_external_cmd(char **args) {
     return;
   }
 
-  char *path_copy = strdup(path_env); // make a copy since strtok modifies the string
+  char *path_copy = strdup(path_env); // Make a copy since strtok modifies the string
   if (path_copy == NULL) {
     fprintf(stderr, "Memory allocation failed\n");
     return;
@@ -203,7 +212,7 @@ void run_external_cmd(char **args) {
   }
 
   if (!found) {
-    fprintf(stderr, "%s: command not found\n", args[0]);
+    fprintf(stderr, "write: command not found\n", args[0]);
     free(path_copy);
     return;
   }
@@ -215,8 +224,8 @@ void run_external_cmd(char **args) {
     perror("execv");
     exit(1);
   } else if (pid > 0) {
-    // parent: wait for child
-    waitpid(NULL, 0);
+    // Parent: wait for child
+    waitpid(pid, NULL, 0);
   } else {
     perror("fork");
   }
@@ -225,19 +234,19 @@ void run_external_cmd(char **args) {
 }
 
 int main() {
-  setbuf(stdout, NULL); // disables output buffering so we see "$ " right away
-  char input[MAX_INPUT]; // storage for the user's input
-  char *args[MAX_ARGS]; // array to hold command and arguments
+  setbuf(stdout, NULL); // Disables output buffering so we see "$ " right away
+  char input[MAX_INPUT]; // Storage for the user's input
+  char *args[MAX_ARGS]; // Array to hold command and arguments
 
   while (1) {
     printf("$ ");
 
     // fgets() returns NULL if the user types Ctrl+D (EOF)
     if (fgets(input, sizeof(input), stdin) == NULL) {
-      break; // if Ctrl+D is pressed (EOF), exit the loop and end the shell
+      break; // If Ctrl+D is pressed (EOF), exit the loop and end the shell
     }
 
-    input[strcspn(input, "\n")] = '\0'; // remove newline
+    input[strcspn(input, "\n")] = '\0'; // Remove newline
 
     // Parse input into args
     parse_input(input, args);
@@ -262,9 +271,10 @@ int main() {
       run_external_cmd(args);
     }
 
-    // free alloc'd args
+    // Free allocated arguments
     for (int i = 0; args[i] != NULL; i++) {
       free(args[i]);
+      args[i] = NULL; // Set to NULL for safety
     }
   }
 
