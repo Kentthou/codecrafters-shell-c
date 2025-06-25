@@ -4,169 +4,176 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <fcntl.h>
 #include <readline/readline.h>
 #include <readline/history.h>
 
-#define MAX_INPUT     128
-#define MAX_ARGS      16
-#define MAX_PATH      4096
+#define MAX_ARGS 16
+#define MAX_PATH 4096
 
-// List of builtin commands we support and want to autocomplete
-static const char *builtins[] = { "echo", 
-                                  "exit", 
-                                  "pwd", 
-                                  "cd", 
-                                  "type", 
-                                  NULL };
+// --- Trie data structure for autocomplete ---
+typedef struct TrieNode {
+    char letter;
+    int is_end;            // marks end of a word
+    struct TrieNode *child;  // first child
+    struct TrieNode *sibling;// next sibling
+} TrieNode;
 
-/*
- * readline completion: called when <TAB> is pressed.
- * If we are completing the first word, offer builtin matches.
- */
-static char **completion_entry(const char *text, int start, int end) {
-    // Only complete the first token (the command)
+// Create a new trie node
+static TrieNode* new_node(char letter) {
+    TrieNode *node = malloc(sizeof(TrieNode));
+    node->letter = letter;
+    node->is_end = 0;
+    node->child = node->sibling = NULL;
+    return node;
+}
+
+// Insert a word into the trie
+static void trie_insert(TrieNode *root, const char *word) {
+    TrieNode *cur = root;
+    for (; *word; word++) {
+        // find matching child or create
+        TrieNode *p = cur->child, *prev = NULL;
+        while (p && p->letter != *word) {
+            prev = p; p = p->sibling;
+        }
+        if (!p) {
+            TrieNode *n = new_node(*word);
+            if (prev) prev->sibling = n;
+            else       cur->child = n;
+            p = n;
+        }
+        cur = p;
+    }
+    cur->is_end = 1;
+}
+
+// Helper: collect completions recursively
+static void collect(TrieNode *node, char *prefix, int depth,
+                    char **matches, int *count, int max) {
+    if (*count >= max) return;
+    if (node->is_end) {
+        prefix[depth] = '\0';
+        matches[(*count)++] = strdup(prefix);
+    }
+    
+    for (TrieNode *c = node->child; c; c = c->sibling) {
+        prefix[depth] = c->letter;
+        collect(c, prefix, depth+1, matches, count, max);
+    }
+}
+
+// Find node matching the current prefix
+static TrieNode* find_node(TrieNode *root, const char *prefix) {
+    TrieNode *cur = root;
+    for (; *prefix && cur; prefix++) {
+        TrieNode *p = cur->child;
+        while (p && p->letter != *prefix) p = p->sibling;
+        cur = p;
+    }
+    return cur;
+}
+
+// Readline generator: called for each match request
+static char *autocomplete_gen(const char *text, int state) {
+    static char *matches[16];
+    static int match_count, match_index;
+    static TrieNode *root;
+    static int initialized = 0;
+    if (!initialized) {
+        // build trie with builtins
+        root = new_node('\0');
+        trie_insert(root, "echo");
+        trie_insert(root, "exit");
+        trie_insert(root, "pwd");
+        trie_insert(root, "cd");
+        trie_insert(root, "type");
+        initialized = 1;
+    }
+    if (state == 0) {
+        // first call: find all matches
+        match_count = match_index = 0;
+        TrieNode *node = find_node(root, text);
+        char buffer[32];
+        int len = strlen(text);
+        strncpy(buffer, text, len);
+        collect(node, buffer, len, matches, &match_count, 15);
+    }
+    if (match_index < match_count)
+        return matches[match_index++];
+    return NULL;
+}
+
+// Hook into readline for completion
+static char** minishell_completion(const char *text, int start, int end) {
+    // only complete first word
     if (start == 0) {
-        // Tell readline to append a space after the match
         rl_completion_append_character = ' ';
-        return rl_completion_matches(text, rl_filename_completion_function);
+        return rl_completion_matches(text, autocomplete_gen);
     }
     return NULL;
 }
 
-/*
- * Initialize GNU Readline for our shell.
- */
-static void init_readline(void) {
-    rl_readline_name = "mysh";
-    rl_attempted_completion_function = completion_entry;
-    using_history();  // enable history
-}
-
-/*
- * Split the input line into arguments (very simple parser).
- * Handles quotes for grouping but does not support redirection here.
- */
-static void parse_input(char *line, char **argv) {
-    int argc = 0;
+// Simple parser: split by spaces (no quotes support)
+static void parse_args(char *line, char **argv) {
+    int i = 0;
     char *token = strtok(line, " \t");
-    while (token && argc < MAX_ARGS - 1) {
-        argv[argc++] = strdup(token);
+    while (token && i < MAX_ARGS-1) {
+        argv[i++] = token;
         token = strtok(NULL, " \t");
     }
-    argv[argc] = NULL;
-}
-
-/* Builtin: echo */
-static void do_echo(char **argv) {
-    for (int i = 1; argv[i]; i++) {
-        printf("%s%s", argv[i], argv[i+1] ? " " : "");
-    }
-    printf("\n");
-}
-
-/* Builtin: exit (optional exit code) */
-static void do_exit(char **argv) {
-    int code = (argv[1] ? atoi(argv[1]) : 0);
-    exit(code);
-}
-
-/* Builtin: pwd */
-static void do_pwd(void) {
-    char cwd[MAX_PATH];
-    if (getcwd(cwd, sizeof(cwd)))
-        puts(cwd);
-    else
-        perror("pwd");
-}
-
-/* Builtin: cd */
-static void do_cd(char **argv) {
-    const char *dir = argv[1] ? argv[1] : getenv("HOME");
-    if (!dir || chdir(dir) != 0)
-        perror("cd");
-}
-
-/* Builtin: type */
-static void do_type(char **argv) {
-    if (!argv[1]) {
-        fprintf(stderr, "type: missing argument\n");
-        return;
-    }
-
-    for (int i = 0; builtins[i]; i++) {
-        if (strcmp(argv[1], builtins[i]) == 0) {
-            printf("%s is a shell builtin\n", argv[1]);
-            return;
-        }
-    }
-    // Not builtin, look in PATH
-    char *path = strdup(getenv("PATH"));
-    char *dir = strtok(path, ":");
-    char candidate[MAX_PATH];
-    while (dir) {
-        snprintf(candidate, sizeof(candidate), "%s/%s", dir, argv[1]);
-        if (access(candidate, X_OK) == 0) {
-            printf("%s is %s\n", argv[1], candidate);
-            free(path);
-            return;
-        }
-        dir = strtok(NULL, ":");
-    }
-    printf("%s: not found\n", argv[1]);
-    free(path);
-}
-
-/*
- * Launch an external program by searching PATH.
- */
-static void launch_external(char **argv) {
-    char *path_env = getenv("PATH");
-    char *path = strdup(path_env);
-    char *dir = strtok(path, ":");
-    char full[MAX_PATH];
-
-    while (dir) {
-        snprintf(full, sizeof(full), "%s/%s", dir, argv[0]);
-        if (access(full, X_OK) == 0) {
-            pid_t pid = fork();
-            if (pid == 0) execv(full, argv);
-            else waitpid(pid, NULL, 0);
-            free(path);
-            return;
-        }
-        dir = strtok(NULL, ":");
-    }
-    fprintf(stderr, "%s: command not found\n", argv[0]);
-    free(path);
+    argv[i] = NULL;
 }
 
 int main(void) {
-    init_readline();
+    char *line;
+    char *argv[MAX_ARGS];
 
-    while (1) {
-        char *line = readline("$ ");
-        if (!line) break;               // EOF
-        if (*line) add_history(line);   // store non-empty lines
+    // Initialize readline and completion
+    rl_readline_name = "minishell";
+    rl_attempted_completion_function = minishell_completion;
+    using_history();
 
-        char *argv[MAX_ARGS];
-        parse_input(line, argv);
+    while ((line = readline("$ ")) != NULL) {
+        if (*line) add_history(line);
+        parse_args(line, argv);
+        if (!argv[0]) { free(line); continue; }
+
+        // Builtins
+        if (strcmp(argv[0], "echo") == 0) {
+            for (int i = 1; argv[i]; i++)
+                printf("%s%s", argv[i], argv[i+1]?" ":"\n");
+        }
+        else if (strcmp(argv[0], "exit") == 0) {
+            free(line);
+            break;
+        }
+        else if (strcmp(argv[0], "pwd") == 0) {
+            char cwd[MAX_PATH];
+            if (getcwd(cwd, sizeof(cwd))) puts(cwd);
+        }
+        else if (strcmp(argv[0], "cd") == 0) {
+            const char *d = argv[1]?argv[1]:getenv("HOME");
+            chdir(d);
+        }
+        else if (strcmp(argv[0], "type") == 0) {
+            if (!argv[1]) printf("type: missing arg\n");
+            else {
+                int ok = 0;
+                // check builtin
+                for (char **b = (char*[]){"echo","exit","pwd","cd","type",NULL}; b[0]; b++)
+                    if (!strcmp(argv[1], *b)) { printf("%s is builtin\n", argv[1]); ok=1; }
+                if (!ok) printf("%s: not found\n", argv[1]);
+            }
+        }
+        // External commands: fork+exec
+        else {
+            pid_t pid = fork();
+            if (pid == 0) execvp(argv[0], argv);
+            else if (pid > 0) waitpid(pid, NULL, 0);
+            else perror("fork");
+        }
         free(line);
-
-        if (!argv[0]) continue;
-
-        // Dispatch builtins
-        if (strcmp(argv[0], "echo") == 0)        do_echo(argv);
-        else if (strcmp(argv[0], "exit") == 0)   do_exit(argv);
-        else if (strcmp(argv[0], "pwd") == 0)    do_pwd();
-        else if (strcmp(argv[0], "cd") == 0)     do_cd(argv);
-        else if (strcmp(argv[0], "type") == 0)   do_type(argv);
-        else                                       launch_external(argv);
-
-        // Free argument strings
-        for (int i = 0; argv[i]; i++) free(argv[i]);
     }
-
-    printf("\nGoodbye!\n");
+    printf("Goodbye!\n");
     return 0;
 }
