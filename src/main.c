@@ -38,7 +38,7 @@ void parse_input(char *input, char **args) {
       continue;
     }
 
-    if (!in_single_quote && !in_double_quote (c == ' ' || input[i] == '\t')) {
+    if (!in_single_quote && !in_double_quote && (c == ' ' || input[i] == '\t')) {
       if (buf_index > 0) {
         arg_buf[buf_index] = '\0';
         args[arg_index++] = strdup(arg_buf);
