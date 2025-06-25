@@ -92,12 +92,13 @@ void parse_input(char *input, char **args) {
     args[arg_index] = NULL;
 }
 
-// Handle redirection operators: >, >>, 2>, 2>>
+// Handle >, >>, 2>, 2>>
 void handle_redirection(char **args) {
     for (int i = 0; args[i] != NULL; ) {
         int fd_target = -1;
         int flags = 0;
         mode_t mode = 0644;
+
         if (strcmp(args[i], ">") == 0) {
             fd_target = STDOUT_FILENO;
             flags = O_CREAT | O_TRUNC | O_WRONLY;
@@ -128,7 +129,8 @@ void handle_redirection(char **args) {
                 return;
             }
             close(fd);
-            // Remove the redirection tokens from args
+
+            // remove redirection tokens
             int j = i;
             while (args[j+2] != NULL) {
                 args[j] = args[j+2];
@@ -136,7 +138,6 @@ void handle_redirection(char **args) {
             }
             args[j] = NULL;
             args[j+1] = NULL;
-            // continue at same i to catch multiple redirections
         } else {
             i++;
         }
@@ -160,7 +161,11 @@ void handle_type(char **args) {
     char full_path[MAXIMUM_PATH]; int found = 0;
     while (dir) {
         snprintf(full_path, sizeof(full_path), "%s/%s", dir, args[1]);
-        if (access(full_path, X_OK) == 0) { printf("%s is %s\n", args[1], full_path); found = 1; break; }
+        if (access(full_path, X_OK) == 0) {
+            printf("%s is %s\n", args[1], full_path);
+            found = 1;
+            break;
+        }
         dir = strtok(NULL, ":");
     }
     if (!found) printf("%s: not found\n", args[1]);
@@ -169,32 +174,56 @@ void handle_type(char **args) {
 
 void handle_pwd() {
     char full_path[MAXIMUM_PATH];
-    if (getcwd(full_path, sizeof(full_path))) printf("%s\n", full_path);
-    else perror("getcwd failed");
+    if (getcwd(full_path, sizeof(full_path)))
+        printf("%s\n", full_path);
+    else
+        perror("getcwd failed");
 }
 
 void handle_cd(char **args) {
-    char resolved[MAXIMUM_PATH]; char *target = args[1] ? args[1] : getenv("HOME");
+    char resolved[MAXIMUM_PATH];
+    char *target = args[1] ? args[1] : getenv("HOME");
     if (!target) { fprintf(stderr, "cd: HOME not set\n"); return; }
-    if (!realpath(target, resolved)) { fprintf(stderr, "cd: %s: No such file or directory\n", target); return; }
-    if (chdir(resolved) != 0) fprintf(stderr, "cd: %s: No such file or directory\n", target);
+    if (!realpath(target, resolved)) {
+        fprintf(stderr, "cd: %s: No such file or directory\n", target);
+        return;
+    }
+    if (chdir(resolved) != 0)
+        fprintf(stderr, "cd: %s: No such file or directory\n", target);
 }
 
 void run_external_cmd(char **args) {
-    char *path_env = getenv("PATH"); if (!path_env) { fprintf(stderr, "PATH not set\n"); return; }
+    char *path_env = getenv("PATH");
+    if (!path_env) { fprintf(stderr, "PATH not set\n"); return; }
     char *path_copy = strdup(path_env);
     char *dir = strtok(path_copy, ":");
-    char full_path[MAXIMUM_PATH]; int found = 0;
+    char full_path[MAXIMUM_PATH];
+    int found = 0;
     while (dir) {
         snprintf(full_path, sizeof(full_path), "%s/%s", dir, args[0]);
-        if (access(full_path, X_OK) == 0) { found = 1; break; }
+        if (access(full_path, X_OK) == 0) {
+            found = 1;
+            break;
+        }
         dir = strtok(NULL, ":");
     }
-    if (!found) { fprintf(stderr, "%s: command not found\n", args[0]); free(path_copy); return; }
+    if (!found) {
+        fprintf(stderr, "%s: command not found\n", args[0]);
+        free(path_copy);
+        return;
+    }
+
     pid_t pid = fork();
-    if (pid == 0) { execv(full_path, args); perror("execv"); exit(1); }
-    else if (pid > 0) waitpid(pid, NULL, 0);
-    else perror("fork");
+    if (pid == 0) {
+        // in child: redirections already set by parent
+        execv(full_path, args);
+        perror("execv");
+        exit(1);
+    } else if (pid > 0) {
+        waitpid(pid, NULL, 0);
+    } else {
+        perror("fork");
+    }
     free(path_copy);
 }
 
@@ -209,34 +238,59 @@ int main() {
     while (1) {
         char *line = readline("$ ");
         if (!line) break;               // Ctrl-D
-        if (*line) add_history(line);   // add non-empty to history
+        if (*line) add_history(line);   // only non-empty
 
+        // Save shell FDs so we can restore after redirections
+        int saved_out = dup(STDOUT_FILENO);
+        int saved_err = dup(STDERR_FILENO);
+
+        // Parse
         char *args[MAX_ARGS];
         *args = NULL;
-
         char buf[MAX_INPUT];
         strncpy(buf, line, MAX_INPUT);
         buf[MAX_INPUT-1] = '\0';
         free(line);
-
         parse_input(buf, args);
-        if (!args[0]) continue;
+        if (!args[0]) {
+            // nothing to do; restore
+            dup2(saved_out, STDOUT_FILENO);
+            dup2(saved_err, STDERR_FILENO);
+            close(saved_out);
+            close(saved_err);
+            continue;
+        }
 
-        // Handle redirections before executing commands
+        // Handle redirections (this dup2’s in the parent, so child inherits)
         handle_redirection(args);
-        if (!args[0]) continue;
 
-        // Execute builtins or external
-        if (strcmp(args[0], "echo") == 0)      handle_echo(args);
-        else if (strcmp(args[0], "type") == 0) handle_type(args);
-        else if (strcmp(args[0], "pwd") == 0)  handle_pwd();
-        else if (strcmp(args[0], "cd") == 0)   handle_cd(args);
-        else if (strcmp(args[0], "exit") == 0 && (!args[1] || strcmp(args[1], "0")==0)) {
+        // Execute
+        if (strcmp(args[0], "echo") == 0) {
+            handle_echo(args);
+        } else if (strcmp(args[0], "type") == 0) {
+            handle_type(args);
+        } else if (strcmp(args[0], "pwd") == 0) {
+            handle_pwd();
+        } else if (strcmp(args[0], "cd") == 0) {
+            handle_cd(args);
+        } else if (strcmp(args[0], "exit") == 0 && (!args[1] || strcmp(args[1], "0") == 0)) {
             free_args(args);
+            // restore before exit
+            dup2(saved_out, STDOUT_FILENO);
+            dup2(saved_err, STDERR_FILENO);
+            close(saved_out);
+            close(saved_err);
             break;
-        } else run_external_cmd(args);
+        } else {
+            run_external_cmd(args);
+        }
 
+        // Cleanup and restore shell FDs
         free_args(args);
+        dup2(saved_out, STDOUT_FILENO);
+        dup2(saved_err, STDERR_FILENO);
+        close(saved_out);
+        close(saved_err);
     }
 
     return 0;
