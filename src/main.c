@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <fcntl.h>
 
 #define MAX_INPUT 128
 #define MAX_ARGS 16
@@ -39,7 +40,6 @@ void parse_input(char *input, char **args) {
           i++;
         } else {
           arg_buf[buf_index++] = '\\';
-          // Next character will be handled in the next iteration
         }
       } else if (c == '"') {
         in_double_quote = 0;
@@ -229,6 +229,48 @@ int main() {
       continue;
     }
 
+    // Detect redirection
+    int redirect_index = -1;
+    for (int j = 0; args[j] != NULL; j++) {
+      if (strcmp(args[j], ">") == 0 || strcmp(args[j], "1>") == 0) {
+        redirect_index = j;
+        break;
+      }
+    }
+
+    char *redirect_file = NULL;
+    if (redirect_index != -1 && args[redirect_index + 1] != NULL) {
+      redirect_file = args[redirect_index + 1];
+      args[redirect_index] = NULL;  // Terminate command args
+    }
+
+    // Set up redirection
+    int original_stdout = -1;
+    int redirect_fd = -1;
+    if (redirect_file != NULL) {
+      redirect_fd = open(redirect_file, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+      if (redirect_fd == -1) {
+        perror("open");
+        free_args(args);
+        continue;
+      }
+      original_stdout = dup(1);
+      if (original_stdout == -1) {
+        perror("dup");
+        close(redirect_fd);
+        free_args(args);
+        continue;
+      }
+      if (dup2(redirect_fd, 1) == -1) {
+        perror("dup2");
+        close(redirect_fd);
+        close(original_stdout);
+        free_args(args);
+        continue;
+      }
+    }
+
+    // Execute command
     if (strcmp(args[0], "echo") == 0) {
       handle_echo(args);
     } else if (strcmp(args[0], "type") == 0) {
@@ -239,9 +281,23 @@ int main() {
       handle_cd(args);
     } else if (strcmp(args[0], "exit") == 0 && args[1] != NULL && strcmp(args[1], "0") == 0) {
       free_args(args);
+      if (redirect_file != NULL) {
+        dup2(original_stdout, 1);
+        close(original_stdout);
+        close(redirect_fd);
+      }
       exit(0);
     } else {
       run_external_cmd(args);
+    }
+
+    // Restore stdout
+    if (redirect_file != NULL) {
+      if (dup2(original_stdout, 1) == -1) {
+        perror("dup2 restore");
+      }
+      close(original_stdout);
+      close(redirect_fd);
     }
 
     free_args(args);
