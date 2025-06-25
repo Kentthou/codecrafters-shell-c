@@ -17,7 +17,7 @@ int is_builtin(const char *cmd) {
          strcmp(cmd, "type") == 0;
 }
 
-// Parse input into args, handling single quotes
+// Parse input into args, handling single quotes and adjacent quoted strings
 void parse_input(char *input, char **args) {
   int arg_index = 0; // Tracks where to store the next argument
   char *current = input; // Points to the current position in input
@@ -25,7 +25,7 @@ void parse_input(char *input, char **args) {
   int buffer_index = 0; // Tracks position in buffer
 
   while (*current != '\0' && arg_index < MAX_ARGS - 1) {
-    // Skips leading spaces
+    // Skip leading spaces
     while (*current == ' ') {
       current++;
     }
@@ -33,9 +33,8 @@ void parse_input(char *input, char **args) {
     // If we hit a single quote
     if (*current == '\'') {
       current++; // Move past the opening quote
-      buffer_index = 0; // Reset buffer
 
-      // Copy all until closing quote
+      // Copy everything until the closing quote
       while (*current != '\0' && *current != '\'') {
         if (buffer_index < MAX_INPUT - 1) {
           buffer[buffer_index++] = *current;
@@ -43,15 +42,31 @@ void parse_input(char *input, char **args) {
         current++;
       }
 
-      // Move past closing quote
+      // Move past the closing quote, if it exists
       if (*current == '\'') {
         current++;
       }
 
+      // Handle adjacent quoted strings (e.g., 'hello''world')
+      while (*current == '\'') {
+        current++; // Skip opening quote of next quoted string
+        while (*current != '\0' && *current != '\'') {
+          if (buffer_index < MAX_INPUT - 1) {
+            buffer[buffer_index++] = *current;
+          }
+          current++;
+        }
+        if (*current == '\'') {
+          current++; // Skip closing quote
+        }
+      }
+
+      // Add the argument if we got something
       if (buffer_index > 0) {
-        buffer[buffer_index] = '\0';
-        args[arg_index] = strdup(buffer);
+        buffer[buffer_index] = '\0'; // End the string
+        args[arg_index] = strdup(buffer); // Copy to args
         arg_index++;
+        buffer_index = 0; // Reset buffer for next argument
       }
     } else if (*current != '\0') {
       // Handle unquoted text
@@ -63,10 +78,12 @@ void parse_input(char *input, char **args) {
         current++;
       }
 
+      // Add the argument if we got something
       if (buffer_index > 0) {
-        buffer[buffer_index] = '\0';
-        args[arg_index] = strdup(buffer);
+        buffer[buffer_index] = '\0'; // End the string
+        args[arg_index] = strdup(buffer); // Copy to args
         arg_index++;
+        buffer_index = 0; // Reset buffer
       }
     }
   }
@@ -119,7 +136,7 @@ void handle_type(char **args) {
   while (dir != NULL) {
     snprintf(full_path, sizeof(full_path), "%s/%s", dir, args[1]);
 
-    if (access(full_path, X_OK) == 0) {
+  if (access(full_path, X_OK) == 0) {
       printf("%s is %s\n", args[1], full_path);
       found = 1;
       break;
@@ -235,7 +252,7 @@ int main() {
   while (1) {
     printf("$ ");
 
-    // fgets() returns NULL if the unordered user types Ctrl+D (EOF)
+    // fgets() returns NULL if the user types Ctrl+D (EOF)
     if (fgets(input, sizeof(input), stdin) == NULL) {
       break; // If Ctrl+D is pressed (EOF), exit the loop and end the shell
     }
