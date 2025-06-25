@@ -65,6 +65,13 @@ void parse_input(char *input, Command *cmd) {
     int in_single_quote = 0, in_double_quote = 0;
     int i = 0;
 
+    // Initialize command struct
+    cmd->args = NULL;
+    cmd->stdout_redir = NULL;
+    cmd->stdout_append = 0;
+    cmd->stderr_redir = NULL;
+    cmd->stderr_append = 0;
+
     // Step 1: Split input into tokens
     while (input[i] != '\0') {
         char c = input[i];
@@ -112,7 +119,7 @@ void parse_input(char *input, Command *cmd) {
                 cmd->stdout_append = 0;
                 j++;
             }
-        } else if (strcmp(tokens[j], ">>") == 0) {
+        } else if (strcmp(tokens[j], ">>") == 0 || strcmp(tokens[j], "1>>") == 0) {
             if (tokens[j + 1] != NULL) {
                 cmd->stdout_redir = strdup(tokens[j + 1]);
                 cmd->stdout_append = 1;
