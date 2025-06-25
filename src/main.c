@@ -17,79 +17,71 @@ int is_builtin(const char *cmd) {
          strcmp(cmd, "type") == 0;
 }
 
-// Parse input into args, handling single quotes and adjacent quoted strings
+// Parse input into args, handling single quotes
 void parse_input(char *input, char **args) {
-  int arg_index = 0; // Tracks where to store the next argument
-  char *current = input; // Points to the current position in input
-  char buffer[MAX_INPUT]; // Temporary storage for building an argument
-  int buffer_index = 0; // Tracks position in buffer
-  int in_quotes = 0; // Tracks if we're inside a quoted string
+  int arg_idx = 0;  // Index for args array
+  int char_idx = 0; // Index for current argument's characters
+  char current_arg[MAX_INPUT]; // Buffer for building current argument
+  int in_quotes = 0; // Flag for being inside single quotes
+  int i = 0; // Index for input string
 
-  while (*current != '\0' && arg_index < MAX_ARGS - 1) {
-    // Skip leading spaces outside quotes
-    if (!in_quotes) {
-      while (*current == ' ') {
-        current++;
-      }
-    }
-
-    // If we hit a single quote
-    if (*current == '\'') {
-      if (!in_quotes) {
-        in_quotes = 1; // Start quoted section
-        current++; // Move past opening quote
-        continue;
-      } else {
-        in_quotes = 0; // End quoted section
-        current++; // Move past closing quote
-        // If next character is another quote, continue appending (handles 'hello''world')
-        if (*current == '\'') {
-          in_quotes = 1;
-          current++;
-          continue;
-        }
-      }
+  while (input[i] != '\0' && arg_idx < MAX_ARGS - 1) {
+    // Skip leading whitespace outside quotes
+    if (!in_quotes && (input[i] == ' ' || input[i] == '\t')) {
+      i++;
+      continue;
     }
 
-    // If we're in quotes or have a non-space character
-    if (*current != '\0' && (in_quotes || *current != ' ')) {
-      buffer[buffer_index++] = *current;
-      current++;
+    // Start of a quoted string
+    if (input[i] == '\'') {
+      in_quotes = !in_quotes; // Toggle quote state
+      i++;
+      continue;
     }
-    // If we're not in quotes and hit a space or end of input
-    else if (!in_quotes && (*current == ' ' || *current == '\0')) {
-      if (buffer_index > 0) {
-        buffer[buffer_index] = '\0'; // End the string
-        args[arg_index] = strdup(buffer); // Copy to args
-        arg_index++;
-        buffer_index = 0; // Reset buffer
-      }
-      if (*current != '\0') {
-        current++; // Move past space
-      }
+
+    // If inside quotes, copy character literally
+    if (in_quotes) {
+      current_arg[char_idx++] = input[i++];
+      continue;
     }
+
+    // Outside quotes, hitting a space or tab ends the current argument
+    if (input[i] == ' ' || input[i] == '\t') {
+      if (char_idx > 0) { // Only store if we have characters
+        current_arg[char_idx] = '\0';
+        args[arg_idx] = strdup(current_arg);
+        arg_idx++;
+        char_idx = 0;
+      }
+      i++;
+      continue;
+    }
+
+    // Copy character to current argument
+    current_arg[char_idx++] = input[i++];
   }
 
-  // If there's anything left in the buffer, add it as the last argument
-  if (buffer_index > 0 && arg_index < MAX_ARGS - 1) {
-    buffer[buffer_index] = '\0';
-    args[arg_index] = strdup(buffer);
-    arg_index++;
+  // Handle the last argument if any characters were collected
+  if (char_idx > 0 && arg_idx < MAX_ARGS - 1) {
+    current_arg[char_idx] = '\0';
+    args[arg_idx] = strdup(current_arg);
+    arg_idx++;
   }
 
-  args[arg_index] = NULL; // Mark the end of arguments
+  // Null-terminate the args array
+  args[arg_idx] = NULL;
 }
 
 // Handle echo command (prints args after echo)
 void handle_echo(char **args) {
   if (args[1] == NULL) {
-    printf("\n"); // Prints a blank line
+    printf("\n"); // prints a blank line
   } else {
-    // Print args[1...n] with a single space between them
+    // Join args[1...n] with spaces
     for (int i = 1; args[i] != NULL; i++) {
       printf("%s", args[i]);
       if (args[i + 1] != NULL) {
-        printf(" "); // Add space only if another argument follows
+        printf(" ");
       }
     }
     printf("\n");
@@ -103,10 +95,10 @@ void handle_type(char **args) {
     return;
   }
 
-  // Check if shell builtin
+  // check if shell builtin
   if (is_builtin(args[1])) {
     printf("%s is a shell builtin\n", args[1]);
-    return; // Stop here, no need to check PATH
+    return; // stop here, no need to check PATH
   }
 
   // Get the PATH environment variable
@@ -116,9 +108,9 @@ void handle_type(char **args) {
     return;
   }
 
-  char *path_copy = strdup(path_env); // Make a copy since strtok modifies the string
-  char *dir = strtok(path_copy, ":"); // Gets the first dir
-  int found = 0; // Flag to track if command is found in any PATH dir
+  char *path_copy = strdup(path_env); // make a copy since strtok modifies the string
+  char *dir = strtok(path_copy, ":"); // gets the first dir
+  int found = 0; // flag to track if command is found in any PATH dir
   char full_path[MAXIMUM_PATH];
 
   // Go through each dir in PATH
@@ -131,7 +123,7 @@ void handle_type(char **args) {
       break;
     }
 
-    dir = strtok(NULL, ":"); // Move to next dir
+    dir = strtok(NULL, ":"); // move to next dir
   }
 
   if (!found) {
@@ -167,7 +159,7 @@ void handle_cd(char **args) {
     target_path = args[1];
   }
 
-  // Gets current working dir
+  // gets current working dir
   if (getcwd(current_dir, sizeof(current_dir)) == NULL) {
     perror("getcwd failed");
     return;
@@ -192,7 +184,7 @@ void run_external_cmd(char **args) {
     return;
   }
 
-  char *path_copy = strdup(path_env); // Make a copy since strtok modifies the string
+  char *path_copy = strdup(path_env); // make a copy since strtok modifies the string
   if (path_copy == NULL) {
     fprintf(stderr, "Memory allocation failed\n");
     return;
@@ -224,7 +216,7 @@ void run_external_cmd(char **args) {
     perror("execv");
     exit(1);
   } else if (pid > 0) {
-    // Parent: wait for child
+    // parent: wait for child
     waitpid(pid, NULL, 0);
   } else {
     perror("fork");
@@ -234,19 +226,19 @@ void run_external_cmd(char **args) {
 }
 
 int main() {
-  setbuf(stdout, NULL); // Disables output buffering so we see "$ " right away
-  char input[MAX_INPUT]; // Storage for the user's input
-  char *args[MAX_ARGS]; // Array to hold command and arguments
+  setbuf(stdout, NULL); // disables output buffering so we see "$ " right away
+  char input[MAX_INPUT]; // storage for the user's input
+  char *args[MAX_ARGS]; // array to hold command and arguments
 
   while (1) {
     printf("$ ");
 
     // fgets() returns NULL if the user types Ctrl+D (EOF)
     if (fgets(input, sizeof(input), stdin) == NULL) {
-      break; // If Ctrl+D is pressed (EOF), exit the loop and end the shell
+      break; // if Ctrl+D is pressed (EOF), exit the loop and end the shell
     }
 
-    input[strcspn(input, "\n")] = '\0'; // Remove newline
+    input[strcspn(input, "\n")] = '\0'; // remove newline
 
     // Parse input into args
     parse_input(input, args);
@@ -266,15 +258,18 @@ int main() {
     } else if (strcmp(args[0], "cd") == 0) {
       handle_cd(args);
     } else if (strcmp(args[0], "exit") == 0 && args[1] != NULL && strcmp(args[1], "0") == 0) {
+      // Free allocated args before exiting
+      for (int i = 0; args[i] != NULL; i++) {
+        free(args[i]);
+      }
       exit(0);
     } else {
       run_external_cmd(args);
     }
 
-    // Free allocated arguments
+    // Free allocated args
     for (int i = 0; args[i] != NULL; i++) {
       free(args[i]);
-      args[i] = NULL; // Set to NULL for safety
     }
   }
 
