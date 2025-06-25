@@ -79,18 +79,12 @@ void handle_echo(char **args) {
   if (args[1] == NULL) {
     printf("\n"); // Prints a blank line
   } else {
-    // Print args[1...n], no space for adjacent quoted strings
-    int prev_was_quoted = 0; // Tracks if previous arg was from quoted string
+    // Print args[1...n] with a single space between them
     for (int i = 1; args[i] != NULL; i++) {
-      // Assume non-empty args from quoted strings have no leading/trailing spaces
-      if (prev_was_quoted && args[i][0] != '\0') {
-        // Skip space for adjacent quoted strings
-      } else if (args[i + 1] != NULL) {
-        printf(" "); // Add space before non-quoted or non-adjacent args
-      }
       printf("%s", args[i]);
-      // Assume non-empty arg is quoted unless it has spaces
-      prev_was_quoted = (args[i][0] != '\0' && strchr(args[i], ' ') == NULL);
+      if (args[i + 1] != NULL) {
+        printf(" "); // Add space only if another argument follows
+      }
     }
     printf("\n");
   }
@@ -212,7 +206,7 @@ void run_external_cmd(char **args) {
   }
 
   if (!found) {
-    fprintf(stderr, "write: command not found\n", args[0]);
+    fprintf(stderr, "%s: command not found\n", args[0]);
     free(path_copy);
     return;
   }
@@ -241,7 +235,7 @@ int main() {
   while (1) {
     printf("$ ");
 
-    // fgets() returns NULL if the user types Ctrl+D (EOF)
+    // fgets() returns NULL if the unordered user types Ctrl+D (EOF)
     if (fgets(input, sizeof(input), stdin) == NULL) {
       break; // If Ctrl+D is pressed (EOF), exit the loop and end the shell
     }
