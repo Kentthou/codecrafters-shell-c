@@ -230,9 +230,15 @@ int main() {
     }
 
     // Detect redirection
+    int redirect_type = 0; // 0: none, 1: stdout, 2: stderr
     int redirect_index = -1;
     for (int j = 0; args[j] != NULL; j++) {
-      if (strcmp(args[j], ">") == 0 || strcmp(args[j], "1>") == 0) {
+      if (strcmp(args[j], "2>") == 0) {
+        redirect_type = 2;
+        redirect_index = j;
+        break;
+      } else if (strcmp(args[j], ">") == 0 || strcmp(args[j], "1>") == 0) {
+        redirect_type = 1;
         redirect_index = j;
         break;
       }
@@ -241,11 +247,11 @@ int main() {
     char *redirect_file = NULL;
     if (redirect_index != -1 && args[redirect_index + 1] != NULL) {
       redirect_file = args[redirect_index + 1];
-      args[redirect_index] = NULL;  // Terminate command args
+      args[redirect_index] = NULL; // Terminate command args
     }
 
     // Set up redirection
-    int original_stdout = -1;
+    int original_fd = -1;
     int redirect_fd = -1;
     if (redirect_file != NULL) {
       redirect_fd = open(redirect_file, O_WRONLY | O_CREAT | O_TRUNC, 0666);
@@ -254,19 +260,36 @@ int main() {
         free_args(args);
         continue;
       }
-      original_stdout = dup(1);
-      if (original_stdout == -1) {
-        perror("dup");
-        close(redirect_fd);
-        free_args(args);
-        continue;
-      }
-      if (dup2(redirect_fd, 1) == -1) {
-        perror("dup2");
-        close(redirect_fd);
-        close(original_stdout);
-        free_args(args);
-        continue;
+      if (redirect_type == 1) {
+        original_fd = dup(1);
+        if (original_fd == -1) {
+          perror("dup");
+          close(redirect_fd);
+          free_args(args);
+          continue;
+        }
+        if (dup2(redirect_fd, 1) == -1) {
+          perror("dup2");
+          close(redirect_fd);
+          close(original_fd);
+          free_args(args);
+          continue;
+        }
+      } else if (redirect_type == 2) {
+        original_fd = dup(2);
+        if (original_fd == -1) {
+          perror("dup");
+          close(redirect_fd);
+          free_args(args);
+          continue;
+        }
+        if (dup2(redirect_fd, 2) == -1) {
+          perror("dup2");
+          close(redirect_fd);
+          close(original_fd);
+          free_args(args);
+          continue;
+        }
       }
     }
 
@@ -282,8 +305,12 @@ int main() {
     } else if (strcmp(args[0], "exit") == 0 && args[1] != NULL && strcmp(args[1], "0") == 0) {
       free_args(args);
       if (redirect_file != NULL) {
-        dup2(original_stdout, 1);
-        close(original_stdout);
+        if (redirect_type == 1) {
+          dup2(original_fd, 1);
+        } else if (redirect_type == 2) {
+          dup2(original_fd, 2);
+        }
+        close(original_fd);
         close(redirect_fd);
       }
       exit(0);
@@ -291,12 +318,18 @@ int main() {
       run_external_cmd(args);
     }
 
-    // Restore stdout
+    // Restore file descriptor
     if (redirect_file != NULL) {
-      if (dup2(original_stdout, 1) == -1) {
-        perror("dup2 restore");
+      if (redirect_type == 1) {
+        if (dup2(original_fd, 1) == -1) {
+          perror("dup2 restore");
+        }
+      } else if (redirect_type == 2) {
+        if (dup2(original_fd, 2) == -1) {
+          perror("dup2 restore");
+        }
       }
-      close(original_stdout);
+      close(original_fd);
       close(redirect_fd);
     }
 
