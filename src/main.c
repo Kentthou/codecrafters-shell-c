@@ -207,41 +207,81 @@ char* find_command_path(char *cmd) {
     return NULL;
 }
 
-/* Executes two commands in a pipeline (e.g., "cat file | wc") */
+/* Runs a built-in command */
+void run_builtin(char **args) {
+    if (strcmp(args[0], "echo") == 0) {
+        handle_echo(args);
+    } else if (strcmp(args[0], "type") == 0) {
+        handle_type(args);
+    } else if (strcmp(args[0], "pwd") == 0) {
+        handle_pwd();
+    } else if (strcmp(args[0], "cd") == 0) {
+        handle_cd(args);
+    } else {
+        fprintf(stderr, "Unknown built-in: %s\n", args[0]);
+    }
+}
+
+/* Runs a command (built-in or external) with specified input and output file descriptors */
+void run_command(char **args, int input_fd, int output_fd) {
+    if (input_fd != STDIN_FILENO) {
+        if (dup2(input_fd, STDIN_FILENO) == -1) {
+            perror("dup2 input");
+            exit(1);
+        }
+        close(input_fd);
+    }
+    if (output_fd != STDOUT_FILENO) {
+        if (dup2(output_fd, STDOUT_FILENO) == -1) {
+            perror("dup2 output");
+            exit(1);
+        }
+        close(output_fd);
+    }
+    if (is_builtin(args[0])) {
+        run_builtin(args);
+        exit(0);
+    } else {
+        char *path = find_command_path(args[0]);
+        if (path) {
+            execv(path, args);
+            perror("execv");
+            free(path);
+        } else {
+            fprintf(stderr, "%s: command not found\n", args[0]);
+        }
+        exit(1);
+    }
+}
+
+/* Executes two commands in a pipeline */
 void execute_pipeline(char **cmd1_args, char **cmd2_args) {
-    char* cmd1_path = find_command_path(cmd1_args[0]);
-    if (!cmd1_path) { fprintf(stderr, "%s: command not found\n", cmd1_args[0]); return; }
-    char* cmd2_path = find_command_path(cmd2_args[0]);
-    if (!cmd2_path) { fprintf(stderr, "%s: command not found\n", cmd2_args[0]); free(cmd1_path); return; }
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        perror("pipe");
+        return;
+    }
 
-    int pipefd[2]; // Array for pipe: [0] is read end, [1] is write end
-    if (pipe(pipefd) == -1) { perror("pipe"); free(cmd1_path); free(cmd2_path); return; }
+    pid_t pid1 = fork();
+    if (pid1 == 0) {
+        close(pipefd[0]);
+        run_command(cmd1_args, STDIN_FILENO, pipefd[1]);
+    } else if (pid1 < 0) {
+        perror("fork");
+    }
 
-    pid_t pid1 = fork(); // Fork first child
-    if (pid1 == 0) { // Child 1: runs first command
-        close(pipefd[0]); // Close read end (not needed)
-        dup2(pipefd[1], STDOUT_FILENO); // Send stdout to pipe's write end
-        close(pipefd[1]); // Close write end after redirecting
-        execv(cmd1_path, cmd1_args); // Run command (e.g., "cat")
-        perror("execv"); exit(1);
-    } else if (pid1 < 0) { perror("fork"); }
+    pid_t pid2 = fork();
+    if (pid2 == 0) {
+        close(pipefd[1]);
+        run_command(cmd2_args, pipefd[0], STDOUT_FILENO);
+    } else if (pid2 < 0) {
+        perror("fork");
+    }
 
-    pid_t pid2 = fork(); // Fork second child
-    if (pid2 == 0) { // Child 2: runs second command
-        close(pipefd[1]); // Close write end (not needed)
-        dup2(pipefd[0], STDIN_FILENO); // Get stdin from pipe's read end
-        close(pipefd[0]); // Close read end after redirecting
-        execv(cmd2_path, cmd2_args); // Run command (e.g., "wc")
-        perror("execv"); exit(1);
-    } else if (pid2 < 0) { perror("fork"); }
-
-    // Parent: clean up and wait
-    close(pipefd[0]); // Close both ends in parent
+    close(pipefd[0]);
     close(pipefd[1]);
-    waitpid(pid1, NULL, 0); // Wait for first child
-    waitpid(pid2, NULL, 0); // Wait for second child
-    free(cmd1_path);
-    free(cmd2_path);
+    waitpid(pid1, NULL, 0);
+    waitpid(pid2, NULL, 0);
 }
 
 int main() {
@@ -258,7 +298,7 @@ int main() {
         if (line == NULL) { break; }
         if (*line) { add_history(line); }
         strncpy(input, line, sizeof(input) - 1);
-        input[sizeof(input) - 1] = '\0';
+        input[sizeof(input) -  1] = '\0';
         free(line);
 
         parse_input(input, args);
@@ -270,12 +310,12 @@ int main() {
             if (strcmp(args[i], "|") == 0) { pipe_index = i; break; }
         }
 
-        if (pipe_index != -1) { // If there's a pipe
-            char **cmd1_args = args; // First command starts at args[0]
-            args[pipe_index] = NULL; // Split here
-            char **cmd2_args = &args[pipe_index + 1]; // Second command starts after |
+        if (pipe_index != -1) {
+            char **cmd1_args = args;
+            args[pipe_index] = NULL;
+            char **cmd2_args = &args[pipe_index + 1];
             execute_pipeline(cmd1_args, cmd2_args);
-        } else { // No pipe, handle single command
+        } else {
             int redirect_fd_num = 0, append_mode = 0, redirect_index = -1;
             for (int j = 0; args[j] != NULL; j++) {
                 if (strcmp(args[j], "2>>") == 0) { redirect_fd_num = 2; append_mode = 1; redirect_index = j; break; }
