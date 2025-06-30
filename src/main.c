@@ -9,9 +9,12 @@
 #include <readline/history.h>
 #include <dirent.h>
 
-#define MAX_INPUT 128
+#define MY_MAX_INPUT 128  // Renamed to avoid conflict with system MAX_INPUT
 #define MAX_ARGS 16
 #define MAXIMUM_PATH 4096
+
+/* Function prototypes */
+char *find_command_path(char *cmd);
 
 /* List of builtins to autocomplete */
 static char *builtin_commands[] = {
@@ -252,7 +255,7 @@ void execute_pipeline(char **cmd1_args, char **cmd2_args) {
 
 int main() {
     setbuf(stdout, NULL);
-    char input[MAX_INPUT];
+    char input[MY_MAX_INPUT];  // Use renamed macro
     char *args[MAX_ARGS];
 
     rl_readline_name = "mysh";
