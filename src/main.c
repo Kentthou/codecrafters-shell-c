@@ -163,6 +163,34 @@ void handle_cd(char **args) {
     }
 }
 
+void run_external_cmd(char **args) {
+    char *path_env = getenv("PATH");
+    if (!path_env) { fprintf(stderr, "PATH not set\n"); return; }
+    char *path_copy = strdup(path_env);
+    char *dir = strtok(path_copy, ":");
+    char full_path[MAXIMUM_PATH];
+    int found = 0;
+
+    while (dir != NULL) {
+        snprintf(full_path, sizeof(full_path), "%s/%s", dir, args[0]);
+        if (access(full_path, X_OK) == 0) { found = 1; break; }
+        dir = strtok(NULL, ":");
+    }
+    if (!found) { fprintf(stderr, "%s: command not found\n", args[0]); free(path_copy); return; }
+
+    pid_t pid = fork();
+    if (pid == 0) { execv(full_path, args); perror("execv"); exit(1); }
+    else if (pid > 0) { waitpid(pid, NULL, 0); } else { perror("fork"); }
+    free(path_copy);
+}
+
+void free_args(char **args) {
+    for (int i = 0; args[i] != NULL; i++) { free(args[i]); }
+}
+
+/* NEW FUNCTIONS FOR PIPELINES */
+
+/* Finds the full path of a command (e.g., "cat" -> "/bin/cat") */
 char* find_command_path(char *cmd) {
     char *path_env = getenv("PATH");
     if (!path_env) return NULL;
@@ -179,15 +207,37 @@ char* find_command_path(char *cmd) {
     return NULL;
 }
 
+/* Runs a built-in command */
 void run_builtin(char **args) {
-    if (strcmp(args[0], "echo") == 0)      handle_echo(args);
-    else if (strcmp(args[0], "type") == 0) handle_type(args);
-    else if (strcmp(args[0], "pwd") == 0)  handle_pwd();
-    else if (strcmp(args[0], "cd") == 0)   handle_cd(args);
-    else fprintf(stderr, "Unknown built-in: %s\n", args[0]);
+    if (strcmp(args[0], "echo") == 0) {
+        handle_echo(args);
+    } else if (strcmp(args[0], "type") == 0) {
+        handle_type(args);
+    } else if (strcmp(args[0], "pwd") == 0) {
+        handle_pwd();
+    } else if (strcmp(args[0], "cd") == 0) {
+        handle_cd(args);
+    } else {
+        fprintf(stderr, "Unknown built-in: %s\n", args[0]);
+    }
 }
 
-void run_command(char **args) {
+/* Runs a command (built-in or external) with specified input and output file descriptors */
+void run_command(char **args, int input_fd, int output_fd) {
+    if (input_fd != STDIN_FILENO) {
+        if (dup2(input_fd, STDIN_FILENO) == -1) {
+            perror("dup2 input");
+            exit(1);
+        }
+        close(input_fd);
+    }
+    if (output_fd != STDOUT_FILENO) {
+        if (dup2(output_fd, STDOUT_FILENO) == -1) {
+            perror("dup2 output");
+            exit(1);
+        }
+        close(output_fd);
+    }
     if (is_builtin(args[0])) {
         run_builtin(args);
         exit(0);
@@ -204,71 +254,34 @@ void run_command(char **args) {
     }
 }
 
-/* Executes a pipeline of multiple commands */
-void execute_pipeline(char **args) {
-    char *cmds[MAX_ARGS];
-    char **cmd_argv[MAX_ARGS];
-    int cmd_count = 0;
-
-    /* Split args by '|' into separate commands */
-    cmd_argv[cmd_count++] = args;
-    for (int i = 0; args[i] != NULL; i++) {
-        if (strcmp(args[i], "|") == 0) {
-            args[i] = NULL;
-            cmd_argv[cmd_count++] = &args[i + 1];
-        }
+/* Executes two commands in a pipeline */
+void execute_pipeline(char **cmd1_args, char **cmd2_args) {
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        perror("pipe");
+        return;
     }
 
-    int num_pipes = cmd_count - 1;
-    int pipefd[MAX_ARGS][2];
-    pid_t pids[MAX_ARGS];
-
-    /* Create pipes */
-    for (int i = 0; i < num_pipes; i++) {
-        if (pipe(pipefd[i]) == -1) {
-            perror("pipe");
-            return;
-        }
+    pid_t pid1 = fork();
+    if (pid1 == 0) {
+        close(pipefd[0]);
+        run_command(cmd1_args, STDIN_FILENO, pipefd[1]);
+    } else if (pid1 < 0) {
+        perror("fork");
     }
 
-    /* Fork for each command */
-    for (int i = 0; i < cmd_count; i++) {
-        pids[i] = fork();
-        if (pids[i] == 0) {
-            /* Set up input */
-            if (i > 0) {
-                dup2(pipefd[i-1][0], STDIN_FILENO);
-            }
-            /* Set up output */
-            if (i < num_pipes) {
-                dup2(pipefd[i][1], STDOUT_FILENO);
-            }
-            /* Close all pipe fds in child */
-            for (int j = 0; j < num_pipes; j++) {
-                close(pipefd[j][0]);
-                close(pipefd[j][1]);
-            }
-            /* Execute command */
-            run_command(cmd_argv[i]);
-        } else if (pids[i] < 0) {
-            perror("fork");
-            return;
-        }
+    pid_t pid2 = fork();
+    if (pid2 == 0) {
+        close(pipefd[1]);
+        run_command(cmd2_args, pipefd[0], STDOUT_FILENO);
+    } else if (pid2 < 0) {
+        perror("fork");
     }
 
-    /* Parent closes all pipe fds */
-    for (int i = 0; i < num_pipes; i++) {
-        close(pipefd[i][0]);
-        close(pipefd[i][1]);
-    }
-    /* Wait for all children */
-    for (int i = 0; i < cmd_count; i++) {
-        waitpid(pids[i], NULL, 0);
-    }
-}
-
-void free_args(char **args) {
-    for (int i = 0; args[i] != NULL; i++) { free(args[i]); }
+    close(pipefd[0]);
+    close(pipefd[1]);
+    waitpid(pid1, NULL, 0);
+    waitpid(pid2, NULL, 0);
 }
 
 int main() {
@@ -291,16 +304,18 @@ int main() {
         parse_input(input, args);
         if (args[0] == NULL) { continue; }
 
-        /* Check for any pipeline */
-        int has_pipe = 0;
+        /* Check for pipeline */
+        int pipe_index = -1;
         for (int i = 0; args[i] != NULL; i++) {
-            if (strcmp(args[i], "|") == 0) { has_pipe = 1; break; }
+            if (strcmp(args[i], "|") == 0) { pipe_index = i; break; }
         }
 
-        if (has_pipe) {
-            execute_pipeline(args);
+        if (pipe_index != -1) {
+            char **cmd1_args = args;
+            args[pipe_index] = NULL;
+            char **cmd2_args = &args[pipe_index + 1];
+            execute_pipeline(cmd1_args, cmd2_args);
         } else {
-            /* No pipeline: handle single commands (including redirection) */
             int redirect_fd_num = 0, append_mode = 0, redirect_index = -1;
             for (int j = 0; args[j] != NULL; j++) {
                 if (strcmp(args[j], "2>>") == 0) { redirect_fd_num = 2; append_mode = 1; redirect_index = j; break; }
@@ -322,29 +337,15 @@ int main() {
                 }
             }
 
-            /* Builtin and external commands */
-            if (strcmp(args[0], "echo") == 0)         handle_echo(args);
-            else if (strcmp(args[0], "type") == 0)    handle_type(args);
-            else if (strcmp(args[0], "pwd") == 0)     handle_pwd();
-            else if (strcmp(args[0], "cd") == 0)      handle_cd(args);
+            if (strcmp(args[0], "echo") == 0) { handle_echo(args); }
+            else if (strcmp(args[0], "type") == 0) { handle_type(args); }
+            else if (strcmp(args[0], "pwd") == 0) { handle_pwd(); }
+            else if (strcmp(args[0], "cd") == 0) { handle_cd(args); }
             else if (strcmp(args[0], "exit") == 0 && (args[1] == NULL || strcmp(args[1], "0") == 0)) {
                 free_args(args);
                 if (redirect_file) { dup2(original_fd, redirect_fd_num); close(original_fd); close(redirect_fd); }
                 exit(0);
-            }
-            else {
-                /* External command without pipeline */
-                pid_t pid = fork();
-                if (pid == 0) {
-                    execvp(args[0], args);
-                    perror("execvp");
-                    exit(1);
-                } else if (pid > 0) {
-                    waitpid(pid, NULL, 0);
-                } else {
-                    perror("fork");
-                }
-            }
+            } else { run_external_cmd(args); }
 
             if (redirect_file) {
                 dup2(original_fd, redirect_fd_num);
