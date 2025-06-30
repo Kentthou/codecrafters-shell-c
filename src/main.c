@@ -12,6 +12,7 @@
 #define MAX_INPUT 128
 #define MAX_ARGS 16
 #define MAXIMUM_PATH 4096
+#define MAX_COMMANDS 10
 
 /* List of builtins to autocomplete */
 static char *builtin_commands[] = {
@@ -163,32 +164,9 @@ void handle_cd(char **args) {
     }
 }
 
-void run_external_cmd(char **args) {
-    char *path_env = getenv("PATH");
-    if (!path_env) { fprintf(stderr, "PATH not set\n"); return; }
-    char *path_copy = strdup(path_env);
-    char *dir = strtok(path_copy, ":");
-    char full_path[MAXIMUM_PATH];
-    int found = 0;
-
-    while (dir != NULL) {
-        snprintf(full_path, sizeof(full_path), "%s/%s", dir, args[0]);
-        if (access(full_path, X_OK) == 0) { found = 1; break; }
-        dir = strtok(NULL, ":");
-    }
-    if (!found) { fprintf(stderr, "%s: command not found\n", args[0]); free(path_copy); return; }
-
-    pid_t pid = fork();
-    if (pid == 0) { execv(full_path, args); perror("execv"); exit(1); }
-    else if (pid > 0) { waitpid(pid, NULL, 0); } else { perror("fork"); }
-    free(path_copy);
-}
-
 void free_args(char **args) {
     for (int i = 0; args[i] != NULL; i++) { free(args[i]); }
 }
-
-/* NEW FUNCTIONS FOR PIPELINES */
 
 /* Finds the full path of a command (e.g., "cat" -> "/bin/cat") */
 char* find_command_path(char *cmd) {
@@ -254,34 +232,30 @@ void run_command(char **args, int input_fd, int output_fd) {
     }
 }
 
-/* Executes two commands in a pipeline */
-void execute_pipeline(char **cmd1_args, char **cmd2_args) {
-    int pipefd[2];
-    if (pipe(pipefd) == -1) {
-        perror("pipe");
-        return;
+/* Splits the arguments into multiple commands based on pipe symbol */
+void split_commands(char **args, char ****commands, int *num_commands) {
+    int pipe_count = 0;
+    for (int i = 0; args[i] != NULL; i++) {
+        if (strcmp(args[i], "|") == 0) pipe_count++;
     }
-
-    pid_t pid1 = fork();
-    if (pid1 == 0) {
-        close(pipefd[0]);
-        run_command(cmd1_args, STDIN_FILENO, pipefd[1]);
-    } else if (pid1 < 0) {
-        perror("fork");
+    *num_commands = pipe_count + 1;
+    *commands = malloc(*num_commands * sizeof(char**));
+    int cmd_index = 0;
+    int arg_count = 0;
+    for (int i = 0; ; i++) {
+        if (args[i] == NULL || strcmp(args[i], "|") == 0) {
+            (*commands)[cmd_index] = malloc((arg_count + 1) * sizeof(char*));
+            for (int j = 0; j < arg_count; j++) {
+                (*commands)[cmd_index][j] = args[i - arg_count + j];
+            }
+            (*commands)[cmd_index][arg_count] = NULL;
+            cmd_index++;
+            arg_count = 0;
+            if (args[i] == NULL) break;
+        } else {
+            arg_count++;
+        }
     }
-
-    pid_t pid2 = fork();
-    if (pid2 == 0) {
-        close(pipefd[1]);
-        run_command(cmd2_args, pipefd[0], STDOUT_FILENO);
-    } else if (pid2 < 0) {
-        perror("fork");
-    }
-
-    close(pipefd[0]);
-    close(pipefd[1]);
-    waitpid(pid1, NULL, 0);
-    waitpid(pid2, NULL, 0);
 }
 
 int main() {
@@ -298,24 +272,63 @@ int main() {
         if (line == NULL) { break; }
         if (*line) { add_history(line); }
         strncpy(input, line, sizeof(input) - 1);
-        input[sizeof(input) -  1] = '\0';
+        input[sizeof(input) - 1] = '\0';
         free(line);
 
         parse_input(input, args);
         if (args[0] == NULL) { continue; }
 
-        /* Check for pipeline */
-        int pipe_index = -1;
-        for (int i = 0; args[i] != NULL; i++) {
-            if (strcmp(args[i], "|") == 0) { pipe_index = i; break; }
-        }
+        char **commands[MAX_COMMANDS];
+        int num_commands;
+        split_commands(args, &commands, &num_commands);
 
-        if (pipe_index != -1) {
-            char **cmd1_args = args;
-            args[pipe_index] = NULL;
-            char **cmd2_args = &args[pipe_index + 1];
-            execute_pipeline(cmd1_args, cmd2_args);
+        if (num_commands > 1) {
+            int pipe_fds[MAX_COMMANDS - 1][2];
+            for (int i = 0; i < num_commands - 1; i++) {
+                if (pipe(pipe_fds[i]) == -1) {
+                    perror("pipe");
+                    continue;
+                }
+            }
+
+            pid_t pids[MAX_COMMANDS];
+            for (int i = 0; i < num_commands; i++) {
+                pids[i] = fork();
+                if (pids[i] == 0) {
+                    // Child process
+                    if (i == 0) {
+                        // First command: stdin -> pipe[0][1]
+                        run_command(commands[0], STDIN_FILENO, pipe_fds[0][1]);
+                    } else if (i == num_commands - 1) {
+                        // Last command: pipe[i-1][0] -> stdout
+                        run_command(commands[i], pipe_fds[i-1][0], STDOUT_FILENO);
+                    } else {
+                        // Intermediate command: pipe[i-1][0] -> pipe[i][1]
+                        run_command(commands[i], pipe_fds[i-1][0], pipe_fds[i][1]);
+                    }
+                    // Close all pipe fds in child
+                    for (int j = 0; j < num_commands - 1; j++) {
+                        close(pipe_fds[j][0]);
+                        close(pipe_fds[j][1]);
+                    }
+                    exit(0); // Ensure child exits
+                } else if (pids[i] < 0) {
+                    perror("fork");
+                }
+            }
+
+            // Parent: close all pipe fds
+            for (int i = 0; i < num_commands - 1; i++) {
+                close(pipe_fds[i][0]);
+                close(pipe_fds[i][1]);
+            }
+
+            // Wait for all children
+            for (int i = 0; i < num_commands; i++) {
+                waitpid(pids[i], NULL, 0);
+            }
         } else {
+            // Single command with possible redirection
             int redirect_fd_num = 0, append_mode = 0, redirect_index = -1;
             for (int j = 0; args[j] != NULL; j++) {
                 if (strcmp(args[j], "2>>") == 0) { redirect_fd_num = 2; append_mode = 1; redirect_index = j; break; }
@@ -345,7 +358,16 @@ int main() {
                 free_args(args);
                 if (redirect_file) { dup2(original_fd, redirect_fd_num); close(original_fd); close(redirect_fd); }
                 exit(0);
-            } else { run_external_cmd(args); }
+            } else {
+                pid_t pid = fork();
+                if (pid == 0) {
+                    run_command(args, STDIN_FILENO, STDOUT_FILENO);
+                } else if (pid > 0) {
+                    waitpid(pid, NULL, 0);
+                } else {
+                    perror("fork");
+                }
+            }
 
             if (redirect_file) {
                 dup2(original_fd, redirect_fd_num);
@@ -354,6 +376,10 @@ int main() {
             }
         }
 
+        // Free memory
+        for (int i = 0; i < num_commands; i++) {
+            free(commands[i]);
+        }
         free_args(args);
     }
     return 0;
